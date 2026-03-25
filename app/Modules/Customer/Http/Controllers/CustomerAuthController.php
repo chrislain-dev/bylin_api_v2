@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Modules\Customer\Models\Customer;
 use Laravel\Socialite\Facades\Socialite;
 use Illuminate\Validation\ValidationException;
@@ -91,9 +92,9 @@ class CustomerAuthController extends ApiController
         // Merge guest cart with customer cart if session_id is provided
         $this->mergeGuestCart($request, $customer->id);
 
-        return $this->successResponse([
-            'customer' => $customer->fresh()->load(['addresses']),
-        ], 'Login successful');
+        return response()->json([
+            'customer' => $customer->fresh()->load(['addresses', 'roles.permissions'])
+        ]);
     }
 
     /**
@@ -156,9 +157,7 @@ class CustomerAuthController extends ApiController
      */
     public function me(Request $request): JsonResponse
     {
-        return $this->successResponse(
-            $request->user()->load(['addresses'])
-        );
+        return response()->json($request->user()->load(['addresses', 'roles.permissions']));
     }
 
     /**
@@ -334,6 +333,127 @@ class CustomerAuthController extends ApiController
             'customer' => $customer->fresh()->load(['addresses']),
             'login_type' => $loginType,
         ], $message);
+    }
+
+    /**
+     * Handle Google ID Token verification (from frontend Google Sign-In button)
+     * This is the preferred method for SPA applications using Google Identity Services
+     */
+    public function googleIdToken(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'credential' => 'required|string',
+        ]);
+
+        try {
+            $idToken = $validated['credential'];
+
+            // Verify the ID token with Google's tokeninfo endpoint using Laravel HTTP
+            $response = Http::timeout(10)->get('https://oauth2.googleapis.com/tokeninfo', [
+                'id_token' => $idToken,
+            ]);
+
+            if (!$response->successful()) {
+                Log::warning('Google ID token verification failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                    'ip' => $request->ip(),
+                ]);
+                return $this->errorResponse('Invalid Google token', 401);
+            }
+
+            $googleData = $response->json();
+
+            // Verify the token is for our app
+            $expectedClientId = config('services.google.client_id');
+            if (($googleData['aud'] ?? null) !== $expectedClientId) {
+                Log::warning('Google ID token audience mismatch', [
+                    'expected' => $expectedClientId,
+                    'received' => $googleData['aud'] ?? 'null',
+                    'ip' => $request->ip(),
+                ]);
+                return $this->errorResponse('Token not issued for this application', 401);
+            }
+
+            // Extract user information from the verified token
+            $googleId = $googleData['sub'] ?? null;
+            $email = $googleData['email'] ?? null;
+            $emailVerified = ($googleData['email_verified'] ?? 'false') === 'true';
+            $name = $googleData['name'] ?? null;
+            $picture = $googleData['picture'] ?? null;
+
+            if (!$email || !$googleId) {
+                return $this->errorResponse('Invalid token data', 400);
+            }
+
+            // Check if customer exists by OAuth provider ID
+            $customer = Customer::where('oauth_provider', 'google')
+                ->where('oauth_provider_id', $googleId)
+                ->first();
+
+            if ($customer) {
+                // Existing OAuth customer - just login
+                return $this->loginOAuthCustomer($request, $customer, 'existing_oauth');
+            }
+
+            // Check if customer exists by email (account linking scenario)
+            $customer = Customer::where('email', $email)->first();
+
+            if ($customer) {
+                // Account linking: Link Google OAuth to existing account
+                $customer->linkOAuthProvider('google', $googleId, $picture);
+
+                Log::info('Google account linked to existing customer via ID Token', [
+                    'customer_id' => $customer->id,
+                    'email' => $customer->email,
+                    'ip' => $request->ip(),
+                ]);
+
+                return $this->loginOAuthCustomer($request, $customer, 'account_linked');
+            }
+
+            // New customer registration via Google OAuth
+            $names = $this->parseGoogleName($name);
+
+            $customer = Customer::create([
+                'first_name' => $names['first_name'],
+                'last_name' => $names['last_name'],
+                'email' => $email,
+                'email_verified_at' => $emailVerified ? now() : null,
+                'password' => null, // OAuth-only account
+                'oauth_provider' => 'google',
+                'oauth_provider_id' => $googleId,
+                'avatar_url' => $picture,
+                'status' => 'active',
+            ]);
+
+            Log::info('New customer registered via Google ID Token', [
+                'customer_id' => $customer->id,
+                'email' => $customer->email,
+                'ip' => $request->ip(),
+            ]);
+
+            // Send welcome email
+            \Modules\Notification\Jobs\SendWelcomeEmail::dispatch($customer);
+
+            return $this->loginOAuthCustomer($request, $customer, 'new_registration');
+
+        } catch (\Illuminate\Http\Client\RequestException $e) {
+            Log::error('Google ID token verification request failed', [
+                'error' => $e->getMessage(),
+                'ip' => $request->ip(),
+            ]);
+
+            return $this->errorResponse('Failed to verify Google token. Please try again.', 500);
+        } catch (\Exception $e) {
+            Log::error('Google ID Token authentication failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'ip' => $request->ip(),
+            ]);
+
+            return $this->errorResponse('Google authentication failed. Please try again.', 500);
+        }
     }
 
     /**

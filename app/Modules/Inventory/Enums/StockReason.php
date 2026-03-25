@@ -12,6 +12,7 @@ enum StockReason: string
     case DAMAGED = 'damaged';
     case RESTOCK = 'restock';
     case LOST = 'lost';
+    case ORDER = 'order';
 
     public function label(): string
     {
@@ -22,13 +23,14 @@ enum StockReason: string
             self::DAMAGED => 'Produit endommagé',
             self::RESTOCK => 'Produit restocké',
             self::LOST => 'Produit perdu',
+            self::ORDER => 'Commande client',
         };
     }
 
     public function defaultMovementType(): string
     {
         return match ($this) {
-            self::SALE => 'out',
+            self::SALE, self::ORDER => 'out',
             self::RETURN, self::RESTOCK => 'in',
             default => 'adjustment',
         };

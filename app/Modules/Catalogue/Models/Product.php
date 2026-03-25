@@ -288,9 +288,41 @@ class Product extends BaseModel implements HasMedia
         return $query->where('brand_id', $brandId);
     }
 
-    public function scopePriceBetween($query, float $min, float $max)
+    public function scopePriceBetween($query, $min, $max = null)
     {
-        return $query->whereBetween('price', [$min, $max]);
+        if ($max) {
+             return $query->whereBetween('price', [$min, $max]);
+        }
+        return $query->where('price', '>=', $min);
+    }
+
+    public function scopeWithColor($query, $colors)
+    {
+        $colors = is_array($colors) ? $colors : explode(',', $colors);
+        return $query->whereHas('variations', function ($q) use ($colors) {
+            $q->where(function ($subQ) use ($colors) {
+                foreach ($colors as $color) {
+                    // JSON search logic might depend on how validation attributes are stored.
+                    // Assuming 'attributes' is a JSON column on variations or related table.
+                    // Since variation structure isn't fully visible here, I'll assume standard JSON querying or related attributes table.
+                    // Based on ProductController use of 'variations' => fn($q) => $q->active(), and extractMetadata in frontend using 'attributes.color'
+                    // If attributes is a JSON column on ProductVariation:
+                    $subQ->orWhere('attributes->color', 'like', "%$color%"); 
+                }
+            });
+        });
+    }
+
+    public function scopeWithSize($query, $sizes)
+    {
+        $sizes = is_array($sizes) ? $sizes : explode(',', $sizes);
+         return $query->whereHas('variations', function ($q) use ($sizes) {
+            $q->where(function ($subQ) use ($sizes) {
+                foreach ($sizes as $size) {
+                    $subQ->orWhere('attributes->size', 'like', "%$size%"); 
+                }
+            });
+        });
     }
 
     public function registerMediaCollections(): void

@@ -31,8 +31,8 @@ class CatalogueSeeder extends Seeder
             $attributes = $this->createAttributes();
             $this->command->info('✓ ' . $attributes->count() . ' attributs créés');
 
-            $this->createProducts($brands, $categories, $attributes);
-            $this->command->info('✓ Produits créés avec succès');
+            // $this->createProducts($brands, $categories, $attributes);
+            // $this->command->info('✓ Produits créés avec succès');
 
             $this->command->info('✨ Seeding terminé !');
         });
@@ -63,22 +63,27 @@ class CatalogueSeeder extends Seeder
         $categories = collect();
 
         $genres = [
-            ['name' => 'Homme', 'icon' => 'mars'],
-            ['name' => 'Femme', 'icon' => 'venus'],
-            ['name' => 'Enfant', 'icon' => 'baby'],
-            ['name' => 'Mixte', 'icon' => 'users'],
+            ['name' => 'Homme', 'icon' => 'mars', 'color' => '#3B82F6'],
+            ['name' => 'Femme', 'icon' => 'venus', 'color' => '#EC4899'],
         ];
 
         foreach ($genres as $i => $g) {
-            $cat = $this->createCategory(array_merge($g, ['level' => 0, 'sort_order' => $i + 1]));
+            $this->command->info("  📁 {$g['name']}");
+
+            $cat = $this->createCategory(array_merge($g, [
+                'sort_order' => $i + 1,
+                'is_featured' => true,
+            ]));
             $categories->push($cat);
 
             $types = ['Hauts', 'Bas', 'Chaussures', 'Accessoires'];
+
             foreach ($types as $j => $typeName) {
+                $this->command->info("    📂 {$typeName}");
+
                 $subCat = $this->createCategory([
                     'name' => $typeName,
                     'parent_id' => $cat->id,
-                    'level' => 1,
                     'sort_order' => $j + 1,
                     'slug' => Str::slug($cat->name . '-' . $typeName)
                 ]);
@@ -86,9 +91,9 @@ class CatalogueSeeder extends Seeder
 
                 $subTypes = match ($typeName) {
                     'Hauts' => ['T-shirts', 'Pulls', 'Chemises', 'Vestes'],
-                    'Bas' => ['Jeans', 'Pantalons', 'Shorts'],
-                    'Chaussures' => ['Baskets', 'Bottes', 'Sandales'],
-                    'Accessoires' => ['Sacs', 'Ceintures', 'Chapeaux'],
+                    'Bas' => ['Jeans', 'Pantalons', 'Shorts', 'Jupes'],
+                    'Chaussures' => ['Baskets', 'Bottes', 'Sandales', 'Escarpins'],
+                    'Accessoires' => ['Sacs', 'Ceintures', 'Chapeaux', 'Bijoux'],
                     default => []
                 };
 
@@ -96,7 +101,6 @@ class CatalogueSeeder extends Seeder
                     $finalCat = $this->createCategory([
                         'name' => $subTypeName,
                         'parent_id' => $subCat->id,
-                        'level' => 2,
                         'sort_order' => $k + 1,
                         'slug' => Str::slug($cat->name . '-' . $typeName . '-' . $subTypeName)
                     ]);
@@ -105,14 +109,19 @@ class CatalogueSeeder extends Seeder
             }
         }
 
-        $specials = ['Nouveautés', 'Promotions', 'Collection Bylin'];
-        foreach ($specials as $i => $name) {
-            $categories->push($this->createCategory([
-                'name' => $name,
+        // Catégories spéciales (niveau 0, sans parent)
+        $this->command->info('  ✨ Catégories spéciales');
+
+        $specials = [
+            ['name' => 'Boutique', 'icon' => 'store', 'color' => '#F59E0B', 'slug' => 'products'],
+            ['name' => 'Collections Bylin', 'icon' => 'sparkles', 'color' => '#6366F1', 'slug' => 'collections'],
+        ];
+
+        foreach ($specials as $i => $special) {
+            $categories->push($this->createCategory(array_merge($special, [
                 'is_featured' => true,
-                'level' => 0,
                 'sort_order' => 100 + $i
-            ]));
+            ])));
         }
 
         return $categories;
@@ -124,38 +133,80 @@ class CatalogueSeeder extends Seeder
             $data['slug'] = Str::slug($data['name']);
         }
 
-        return Category::create(array_merge([
+        // Créer d'abord la catégorie pour avoir son ID
+        $category = Category::create(array_merge([
             'is_active' => true,
             'is_visible_in_menu' => true,
-            'description' => $this->faker->sentence(),
+            'description' => "Découvrez notre sélection de {$data['name']}",
+            'meta_title' => $data['name'] . ' - Bylin Style',
+            'meta_description' => "Achetez les meilleurs {$data['name']} sur Bylin Style",
+            'level' => 0, // Valeur par défaut temporaire
+            'path' => '/', // Valeur par défaut temporaire
         ], $data));
+
+        if ($category->parent_id) {
+            $parent = Category::find($category->parent_id);
+            if ($parent) {
+                $category->level = $parent->level + 1;
+                $category->path = "{$parent->path}/{$category->id}";
+            } else {
+                $category->level = 0;
+                $category->path = "/{$category->id}";
+            }
+        } else {
+            $category->level = 0;
+            $category->path = "/{$category->id}";
+        }
+
+        // Sauvegarde sans trigger les events
+        $category->saveQuietly();
+
+        return $category->fresh();
     }
 
     private function createAttributes(): Collection
     {
         $attributes = collect();
 
+        // Taille vêtements
         $sizeAttr = Attribute::create(['name' => 'Taille', 'code' => 'size', 'type' => 'select']);
         $sizeAttr->values()->createMany(
-            collect(['XS', 'S', 'M', 'L', 'XL'])->map(fn($v, $k) => ['value' => $v, 'label' => $v, 'sort_order' => $k])->toArray()
+            collect(['XS', 'S', 'M', 'L', 'XL', 'XXL'])->map(fn($v, $k) => [
+                'value' => $v,
+                'label' => $v,
+                'sort_order' => $k
+            ])->toArray()
         );
         $attributes->push($sizeAttr);
 
-        $shoeAttr = Attribute::create(['name' => 'Pointure', 'code' => 'shoe_size', 'type' => 'taille']);
+        // Pointure chaussures
+        $shoeAttr = Attribute::create(['name' => 'Pointure', 'code' => 'shoe_size', 'type' => 'select']);
         $shoeAttr->values()->createMany(
-            collect(range(36, 45))->map(fn($v, $k) => ['value' => (string)$v, 'label' => (string)$v, 'sort_order' => $k])->toArray()
+            collect(range(36, 45))->map(fn($v, $k) => [
+                'value' => (string)$v,
+                'label' => (string)$v,
+                'sort_order' => $k
+            ])->toArray()
         );
         $attributes->push($shoeAttr);
 
+        // Couleurs
         $colorAttr = Attribute::create(['name' => 'Couleur', 'code' => 'color', 'type' => 'color']);
         $colors = [
             ['value' => 'noir', 'label' => 'Noir', 'code' => '#000000'],
             ['value' => 'blanc', 'label' => 'Blanc', 'code' => '#FFFFFF'],
             ['value' => 'bleu', 'label' => 'Bleu', 'code' => '#0000FF'],
             ['value' => 'rouge', 'label' => 'Rouge', 'code' => '#FF0000'],
+            ['value' => 'vert', 'label' => 'Vert', 'code' => '#00FF00'],
+            ['value' => 'gris', 'label' => 'Gris', 'code' => '#808080'],
         ];
         foreach ($colors as $k => $c) {
-            $colorAttr->values()->create(['value' => $c['value'], 'label' => $c['label'], 'color_code' => $c['code'], 'sort_order' => $k]);
+            $colorAttr->values()->create([
+                'value' => $c['value'],
+                'label' => $c['label'],
+                'color_code' => $c['code'],
+                'sort_order' => $k
+            ]);
         }
         $attributes->push($colorAttr);
 
@@ -164,24 +215,47 @@ class CatalogueSeeder extends Seeder
 
     private function createProducts($brands, $categories, $attributes): void
     {
-        $sizeAttribute = $attributes->firstWhere('code', 'size');
-        $shoeAttribute = $attributes->firstWhere('code', 'shoe_size');
-        $colorAttribute = $attributes->firstWhere('code', 'color');
+        $sizeAttribute = Attribute::with('values')->where('code', 'size')->first();
+        $shoeAttribute = Attribute::with('values')->where('code', 'shoe_size')->first();
+        $colorAttribute = Attribute::with('values')->where('code', 'color')->first();
 
-        $sizeAttribute?->load('values');
-        $shoeAttribute?->load('values');
-        $colorAttribute?->load('values');
+        if (!$sizeAttribute || !$shoeAttribute || !$colorAttribute) {
+            $this->command->error('❌ Erreur: Les attributs n\'ont pas été créés correctement');
+            return;
+        }
 
+        if ($sizeAttribute->values->isEmpty() || $shoeAttribute->values->isEmpty() || $colorAttribute->values->isEmpty()) {
+            $this->command->error('❌ Erreur: Les valeurs d\'attributs sont vides');
+            return;
+        }
+
+        $this->command->info('📊 Distribution des catégories par niveau:');
+        $categories->groupBy('level')->each(function ($cats, $level) {
+            $this->command->info("  Niveau {$level}: {$cats->count()} catégories");
+        });
+
+        // Récupère uniquement les catégories feuilles (niveau 2)
         $leafCategories = $categories->filter(fn($c) => $c->level === 2);
-        $bylinBrand = $brands->firstWhere('slug', 'bylin');
 
+        if ($leafCategories->isEmpty()) {
+            $this->command->error('❌ Erreur: Aucune catégorie de niveau 2 trouvée');
+            $this->command->warn('💡 Catégories disponibles:');
+            $categories->take(10)->each(function ($cat) {
+                $this->command->warn("  - {$cat->name} (level: {$cat->level}, parent_id: {$cat->parent_id})");
+            });
+            return;
+        }
+
+        $this->command->info("✓ {$leafCategories->count()} catégories de niveau 2 trouvées");
+
+        $bylinBrand = $brands->firstWhere('slug', 'bylin');
         $totalProducts = 80;
 
         for ($i = 0; $i < $totalProducts; $i++) {
-            $brand = ($i < 20) ? $bylinBrand : $brands->random();
-
+            $brand = ($i < 20 && $bylinBrand) ? $bylinBrand : $brands->random();
             $category = $leafCategories->random();
 
+            // Construction de la hiérarchie de catégories
             $catsToSync = [$category->id];
             if ($category->parent_id) {
                 $catsToSync[] = $category->parent_id;
@@ -191,61 +265,64 @@ class CatalogueSeeder extends Seeder
                 }
             }
 
-            $isShoe = Str::contains($category->slug, 'chaussure');
-            $isAccessory = Str::contains($category->slug, 'accessoire');
+            // Détection du type de produit
+            $isShoe = Str::contains(strtolower($category->slug), 'chaussure');
+            $isAccessory = Str::contains(strtolower($category->slug), 'accessoire');
             $isClothing = !$isShoe && !$isAccessory;
 
-            $name = $this->faker->word . ' ' . $brand->name . ' ' . $category->name;
+            $name = $this->faker->words(2, true) . ' ' . $brand->name;
 
             $product = Product::create([
                 'brand_id' => $brand->id,
                 'name' => ucfirst($name),
                 'slug' => Str::slug($name) . '-' . Str::random(6),
-                'sku' => strtoupper(substr($brand->name, 0, 3)) . '-' . Str::random(8),
+                'sku' => strtoupper(substr($brand->name, 0, 3)) . '-' . strtoupper(Str::random(8)),
                 'description' => $this->faker->paragraph,
                 'short_description' => $this->faker->sentence,
                 'price' => $this->faker->numberBetween(20, 300) * 100,
                 'stock_quantity' => 0,
                 'status' => 'active',
                 'is_featured' => $this->faker->boolean(20),
-                'is_variable' => ($isClothing || $isShoe),
+                'is_variable' => false,
                 'requires_authenticity' => ($brand->slug === 'bylin'),
             ]);
 
             $product->categories()->sync($catsToSync);
 
+            // Création des variations pour vêtements et chaussures
             if ($isClothing || $isShoe) {
                 $targetSizeAttr = $isShoe ? $shoeAttribute : $sizeAttribute;
 
-                $selectedSizes = $targetSizeAttr->values->random(min(3, $targetSizeAttr->values->count()));
-                $selectedColors = $colorAttribute->values->random(min(2, $colorAttribute->values->count()));
+                $sizeCount = $targetSizeAttr->values->count();
+                $colorCount = $colorAttribute->values->count();
+
+                if ($sizeCount === 0 || $colorCount === 0) {
+                    $this->command->warn("⚠️  Pas de valeurs d'attributs pour le produit {$product->name}");
+                    continue;
+                }
+
+                $selectedSizes = $targetSizeAttr->values->random(min(3, $sizeCount));
+                $selectedColors = $colorAttribute->values->random(min(2, $colorCount));
 
                 foreach ($selectedColors as $colorVal) {
                     foreach ($selectedSizes as $sizeVal) {
-
                         $product->variations()->create([
-                            'sku' => $product->sku . '-' . $sizeVal->value . '-' . substr($colorVal->value, 0, 3),
+                            'sku' => $product->sku . '-' . strtoupper($sizeVal->value) . '-' . strtoupper(substr($colorVal->value, 0, 3)),
                             'variation_name' => "{$sizeVal->label} / {$colorVal->label}",
                             'price' => $product->price,
-                            'stock_quantity' => $this->faker->numberBetween(0, 20),
+                            'stock_quantity' => $this->faker->numberBetween(5, 20),
                             'is_active' => true,
                             'attributes' => [
                                 $targetSizeAttr->code => $sizeVal->value,
                                 $colorAttribute->code => $colorVal->value
                             ]
                         ]);
-
-                        $product->attributes()->syncWithoutDetaching([
-                            $targetSizeAttr->id => ['attribute_value_id' => $sizeVal->id],
-                            $colorAttribute->id => ['attribute_value_id' => $colorVal->id]
-                        ]);
                     }
                 }
 
-                $product->update([
-                    'is_variable' => true
-                ]);
+                $product->update(['is_variable' => true]);
             } else {
+                // Produit simple (accessoires)
                 $product->update([
                     'stock_quantity' => $this->faker->numberBetween(10, 50),
                     'is_variable' => false
@@ -253,7 +330,7 @@ class CatalogueSeeder extends Seeder
             }
 
             if (($i + 1) % 10 === 0) {
-                $this->command->info("  → " . ($i + 1) . " produits traités");
+                $this->command->info("  → " . ($i + 1) . "/{$totalProducts} produits créés");
             }
         }
     }

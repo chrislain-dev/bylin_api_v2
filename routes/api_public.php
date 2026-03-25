@@ -50,6 +50,11 @@ Route::prefix('v1')->group(function () {
             Route::get('/customer/google/callback', [\Modules\Customer\Http\Controllers\CustomerAuthController::class, 'googleCallback'])
                 ->middleware('throttle:10,1')
                 ->name('customer.google.callback');
+            
+            // Google ID Token verification (for frontend Google Sign-In button)
+            Route::post('/customer/google/id-token', [\Modules\Customer\Http\Controllers\CustomerAuthController::class, 'googleIdToken'])
+                ->middleware('throttle:10,1')
+                ->name('customer.google.id-token');
         });
     });
 
@@ -65,10 +70,41 @@ Route::prefix('v1')->group(function () {
             ->name('products.preorder-info');
 
         // Categories
-        Route::get('/categories', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'index'])
-            ->name('categories.index');
-        Route::get('/categories/{id}/products', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'products'])
-            ->name('categories.products');
+        Route::prefix('categories')->name('categories.')->group(function () {
+
+            Route::get('/tree', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'tree'])
+                ->name('tree');
+
+            Route::get('/featured', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'featured'])
+                ->name('featured');
+
+            Route::get('/search', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'search'])
+                ->name('search');
+
+            Route::get('/by-genre/{genre}', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'byGenre'])
+                ->name('by-genre')
+                ->where('genre', 'homme|femme|enfant|mixte');
+
+            // Liste principale
+            Route::get('/', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'index'])
+                ->name('index');
+
+            Route::get('/{slug}', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'show'])
+                ->name('show')
+                ->where('slug', '[a-z0-9-]+');
+
+            Route::get('/{slug}/products', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'products'])
+                ->name('products')
+                ->where('slug', '[a-z0-9-]+');
+
+            Route::get('/{slug}/breadcrumb', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'breadcrumb'])
+                ->name('breadcrumb')
+                ->where('slug', '[a-z0-9-]+');
+
+            Route::get('/{slug}/related', [\Modules\Catalogue\Http\Controllers\CategoryController::class, 'related'])
+                ->name('related')
+                ->where('slug', '[a-z0-9-]+');
+        });
 
         // Brands
         Route::get('/brands', [\Modules\Catalogue\Http\Controllers\BrandController::class, 'index'])

@@ -5,198 +5,211 @@ declare(strict_types=1);
 namespace Modules\Core\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
-use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
+use Modules\Catalogue\Models\Product;
+use Modules\Catalogue\Models\Category;
 
-class HomeContentController extends Controller
+class HomeContentController extends ApiController
 {
     /**
-     * Get all content for the home page (navigation + page content).
+     * Get all home page content in one optimized request
      *
      * @return JsonResponse
      */
     public function index(): JsonResponse
     {
-        $data = [
-            'success' => true,
-            'data' => [
-                'navigation' => $this->getNavigationData(),
-                'home_content' => $this->getHomeContentData(),
-            ],
-        ];
-
-        return response()->json($data);
-    }
-
-    /**
-     * Get navigation structure (MainHeader).
-     */
-    private function getNavigationData(): array
-    {
-        // 1. Fetch dynamic data for "Nouveautés"
-        $newArrivals = \Modules\Catalogue\Models\Product::active()
-            ->latest()
-            ->take(2)
-            ->get()
-            ->map(function ($product) {
+        try {
+            // Cache for 5 minutes to reduce DB load
+            $content = Cache::remember('home_content', 300, function () {
                 return [
-                    'label' => $product->name,
-                    'url' => '/product/' . $product->slug,
+                    'latest_products' => $this->getLatestProducts(),
+                    'featured_categories' => $this->getFeaturedCategories(),
+                    'best_offer' => $this->getBestOffer(),
+                    'cached_at' => now()->toIso8601String(),
                 ];
             });
 
-        // 2. Fetch dynamic data for "Catégories" (Enfants/Sub-categories)
-        // We take sub-categories (where parent_id is not null) or just active categories if no hierarchy yet.
-        $childCategories = \Modules\Catalogue\Models\Category::active()
-            ->whereNotNull('parent_id')
-            ->take(5)
-            ->get()
-            ->map(function ($category) {
-                return [
-                    'label' => $category->name,
-                    'url' => '/category/' . $category->slug,
-                ];
-            });
-        
-        // Fallback if no children, take roots
-        if ($childCategories->isEmpty()) {
-            $childCategories = \Modules\Catalogue\Models\Category::active()
-                ->take(5)
-                ->get()
-                ->map(function ($category) {
-                    return [
-                        'label' => $category->name,
-                        'url' => '/category/' . $category->slug,
-                    ];
-                });
+            return $this->successResponse(
+                $content,
+                'Home content retrieved successfully'
+            );
+        } catch (\Exception $e) {
+            return $this->errorResponse(
+                'Failed to retrieve home content: ' . $e->getMessage(),
+                500
+            );
         }
-
-        // 3. Fetch Featured Product for Mega Menu
-        $featured = \Modules\Catalogue\Models\Product::active()->featured()->first();
-        $featuredBlock = [
-            'title' => 'Mise en avant',
-            'type' => 'image',
-            'image_url' => $featured ? $featured->getFirstMediaUrl('images') : 'https://api.bylin-style.com/storage/mega-menu-featured.jpg',
-            'image_label' => $featured ? $featured->name : 'Notre Best Seller',
-            'url' => $featured ? '/product/' . $featured->slug : '/shop',
-        ];
-
-        return [
-            [
-                'label' => 'Vêtements',
-                'url' => '/shop',
-                'mega_menu' => [
-                    [
-                        'title' => 'Nouveautés',
-                        'type' => 'links',
-                        'links' => $newArrivals->toArray(),
-                        'bottom_link' => ['label' => 'Voir tous', 'url' => '/shop?sort=newest'],
-                    ],
-                    [
-                        'title' => 'Catégories',
-                        'type' => 'links',
-                        'links' => $childCategories->toArray(),
-                        'bottom_link' => ['label' => 'Voir tout', 'url' => '/categories'],
-                    ],
-                    $featuredBlock
-                ],
-            ],
-            ['label' => 'Les Packs', 'url' => '/packs', 'mega_menu' => null],
-            ['label' => 'Tutoriels', 'url' => '/tutorials', 'mega_menu' => null],
-            ['label' => 'Maison bylin', 'url' => '/bylin', 'mega_menu' => null],
-        ];
     }
 
     /**
-     * Get home page specific content.
+     * Get latest products (4 items with badge logic)
+     *
+     * @return array
      */
-    private function getHomeContentData(): array
+    private function getLatestProducts(): array
     {
-        // Categories Explorer (Roots)
-        $rootCategories = \Modules\Catalogue\Models\Category::root()
-            ->active()
-            ->take(3)
-            ->get()
-            ->map(function ($cat) {
+        try {
+            $products = Product::with(['media', 'brand'])
+                ->active()
+                ->latest()
+                ->take(8) // On prend plus pour pouvoir filtrer
+                ->get();
+
+            return $products->map(function ($product) {
+                // Logique pour déterminer le badge
+                $badge = null;
+
+                // Nouveau: produits créés il y a moins de 30 jours
+                if ($product->created_at->gt(now()->subDays(30))) {
+                    $badge = 'Nouveau';
+                }
+                // Tendance: produits avec beaucoup de vues récentes
+                elseif ($product->views_count > 100) {
+                    $badge = 'Tendance';
+                }
+                // Populaire: produits avec bon rating
+                elseif ($product->rating_average >= 4.5 && $product->rating_count >= 10) {
+                    $badge = 'Populaire';
+                }
+                // En promo
+                elseif ($product->is_on_sale && $product->compare_price) {
+                    $badge = 'Promo';
+                }
+
                 return [
-                    'name' => strtoupper($cat->name),
-                    'image' => $cat->image ?? 'https://api.bylin-style.com/storage/cat-placeholder.jpg',
-                    'url' => '/category/' . $cat->slug,
+                    'id' => $product->id,
+                    'name' => $product->name,
+                    'slug' => $product->slug,
+                    'price' => $product->price,
+                    'compare_price' => $product->compare_price,
+                    'image_url' => $product->getFirstMediaUrl('images') ?: null,
+                    'badge' => $badge,
+                    'is_new' => $product->is_new,
+                    'is_on_sale' => $product->is_on_sale,
+                    'discount_percentage' => $product->discount_percentage,
                 ];
-            });
-
-        // New Collection (Latest Products)
-        $newCollection = \Modules\Catalogue\Models\Product::active()
-            ->latest()
-            ->take(6)
-            ->get()
-            ->map(function ($product) {
-                return $this->formatProductForHome($product);
-            });
-
-        // Shop Selection (Random or Featured)
-        $selection = \Modules\Catalogue\Models\Product::active()
-            ->inStock()
-            ->inRandomOrder()
-            ->take(8)
-            ->get()
-            ->map(function ($product) {
-               return $this->formatProductForHome($product);
-            });
-
-        return [
-            'hero' => [
-                'title_line_1' => 'BYLIN',
-                'title_line_2' => 'STYLE',
-                'collection_tag' => 'Collection CONFIDENCE — 2025',
-                'location' => 'Cotonou / Bénin',
-                'background_image' => 'https://api.bylin-style.com/storage/hero.jpg',
-            ],
-            'categories_explorer' => [
-                'display_title' => 'Explorer',
-                'subtitle' => 'Sélection par catégorie',
-                'items' => $rootCategories->toArray(),
-            ],
-            'new_collection_scroll' => [
-                'sidebar_text' => 'Nouvelle Collection',
-                'intro' => [
-                    'title_line_1' => 'BYLIN',
-                    'title_line_2' => 'NEW GEN',
-                    'description' => 'Une esthétique brute forgée dans les rues de Cotonou...',
-                ],
-                'looks' => $newCollection->toArray(),
-                'see_more_link' => ['label' => 'Tout Voir ->', 'url' => '/shop'],
-            ],
-            'shop_selection' => [
-                'title' => 'Sélection Boutique',
-                'items' => $selection->toArray(),
-            ],
-            'faq' => [
-                [
-                    'q' => 'Livraison & Délais ?',
-                    'a' => 'Expédition rapide depuis Cotonou...',
-                ],
-                [
-                    'q' => 'Politique de Retour ?',
-                    'a' => 'Retours acceptés sous 14 jours...',
-                ],
-                [
-                    'q' => 'Sizing & Coupes ?',
-                    'a' => 'Nos pièces suivent une esthétique Oversize...',
-                ],
-            ],
-        ];
+            })
+                ->take(4) // On garde les 4 meilleurs
+                ->values()
+                ->toArray();
+        } catch (\Exception $e) {
+            Log::error('Failed to get latest products: ' . $e->getMessage());
+            return [];
+        }
     }
 
-    private function formatProductForHome($product): array
+    /**
+     * Get featured categories (4 items)
+     *
+     * @return array
+     */
+    private function getFeaturedCategories(): array
     {
-        return [
-            'id' => $product->id,
-            'name' => $product->name,
-            'price_formatted' => number_format((float)$product->price, 0, ',', ' ') . ' FCFA',
-            'material' => $product->meta_data['material'] ?? 'Coton Bio', // Fallback or meta field
-            'image' => $product->getFirstMediaUrl('images') ?: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=1000&auto=format&fit=crop',
-            'tag' => $product->is_featured ? 'BESTSELLER' : 'NEW',
-            'url' => '/product/' . $product->slug,
-        ];
+        try {
+            return Category::query()
+                ->featured()
+                ->active()
+                ->withCount('products')
+                ->orderBy('sort_order')
+                ->take(4)
+                ->get()
+                ->map(fn($category) => [
+                    'id' => $category->id,
+                    'name' => $category->name,
+                    'slug' => $category->slug,
+                    'products_count' => $category->products_count,
+                    'image_url' => $category->image_url,
+                    'link' => "/categories/{$category->slug}",
+                ])
+                ->toArray();
+        } catch (\Exception $e) {
+            Log::error('Failed to get featured categories: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Get best promotional offer
+     *
+     * @return array|null
+     */
+    private function getBestOffer(): ?array
+    {
+        try {
+            // Cherche le produit avec la meilleure réduction
+            $product = Product::with(['media', 'brand'])
+                ->active()
+                ->where('is_on_sale', true)
+                ->whereNotNull('compare_price')
+                ->where('compare_price', '>', 0)
+                ->get()
+                ->filter(function ($p) {
+                    return $p->compare_price > $p->price;
+                })
+                ->sortByDesc(function ($p) {
+                    return (($p->compare_price - $p->price) / $p->compare_price) * 100;
+                })
+                ->first();
+
+            if (!$product) {
+                return null;
+            }
+
+            $discountPercentage = round((($product->compare_price - $product->price) / $product->compare_price) * 100);
+
+            // Génère des features dynamiques basées sur le produit
+            $features = [];
+
+            if ($product->meta_data && isset($product->meta_data['material'])) {
+                $features[] = $product->meta_data['material'];
+            } else {
+                $features[] = 'Tissu 100% coton';
+            }
+
+            $features[] = 'Tailles disponibles: S à XXL';
+            $features[] = 'Livraison gratuite';
+            $features[] = 'Retours sous 14 jours';
+
+            return [
+                'id' => $product->id,
+                'product_id' => $product->id,
+                'name' => $product->name,
+                'slug' => $product->slug,
+                'original_price' => $product->compare_price,
+                'discount_price' => $product->price,
+                'discount_percentage' => $discountPercentage,
+                'image_url' => $product->getFirstMediaUrl('images') ?: null,
+                'description' => $product->short_description ?? $product->description,
+                'features' => $features,
+                'end_date' => now()->addDays(3)->toIso8601String(), // Offre valable 3 jours
+            ];
+        } catch (\Exception $e) {
+            Log::error('Failed to get best offer: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Clear home content cache
+     * (Useful for admin operations)
+     *
+     * @return JsonResponse
+     */
+    public function clearCache(): JsonResponse
+    {
+        try {
+            Cache::forget('home_content');
+
+            return $this->successResponse(
+                null,
+                'Home content cache cleared successfully'
+            );
+        } catch (\Exception $e) {
+            return $this->errorResponse(
+                'Failed to clear cache: ' . $e->getMessage(),
+                500
+            );
+        }
     }
 }

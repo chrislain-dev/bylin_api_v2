@@ -25,11 +25,18 @@ class ProductController extends ApiController
                 'name',
                 'status',
                 'is_featured',
-                AllowedFilter::exact('brand_id'),
                 AllowedFilter::scope('price_between'),
+                AllowedFilter::scope('in_category', 'inCategory'),
+                AllowedFilter::scope('category_id', 'inCategory'), // Uses scope for pivot table
+                AllowedFilter::exact('brand_id'),
+                AllowedFilter::scope('color', 'withColor'),
+                AllowedFilter::scope('size', 'withSize'),
+                AllowedFilter::exact('is_new'),
+                AllowedFilter::exact('is_on_sale'),
+                AllowedFilter::exact('is_featured'),
             ])
             ->allowedSorts(['name', 'price', 'created_at', 'rating_average'])
-            ->with(['brand', 'categories'])
+            ->with(['brand', 'categories', 'media', 'variations'])
             ->where('status', 'active')
             ->paginate($request->input('per_page', 15));
 
@@ -38,12 +45,21 @@ class ProductController extends ApiController
 
     public function show(string $id): JsonResponse
     {
-        $product = Product::with([
+        // Check if input is a valid UUID format
+        $isUuid = preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $id);
+        
+        $query = Product::with([
             'brand',
             'categories',
+            'media',
             'variations' => fn($q) => $q->active(),
             'attributes.values'
-        ])->findOrFail($id);
+        ]);
+        
+        // Search by UUID if valid, otherwise by slug
+        $product = $isUuid 
+            ? $query->where('id', $id)->firstOrFail()
+            : $query->where('slug', $id)->firstOrFail();
 
         $product->increment('views_count');
 

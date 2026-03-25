@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Modules\Catalogue\Models;
 
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Support\Collection;
 use Modules\Core\Models\BaseModel;
+use Illuminate\Support\Facades\Log;
 use Modules\Core\Traits\Searchable;
+use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 /**
  * Modèle Category (Catégorie)
@@ -27,7 +29,7 @@ use Modules\Core\Traits\Searchable;
  * @property string|null $icon Icône pour l'interface
  * @property string|null $color Couleur thème (hex)
  * @property int $level Niveau hiérarchique (0 = racine)
- * @property string|null $path Chemin complet (/genre/type/categorie)
+ * @property string|null $path Chemin hiérarchique (/uuid1/uuid2/uuid3)
  * @property bool $is_active Catégorie active/visible
  * @property bool $is_visible_in_menu Visible dans le menu
  * @property bool $is_featured Mise en avant
@@ -43,7 +45,8 @@ use Modules\Core\Traits\Searchable;
  * @property-read Category|null $parent Catégorie parente
  * @property-read \Illuminate\Database\Eloquent\Collection|Category[] $children Sous-catégories
  * @property-read \Illuminate\Database\Eloquent\Collection|Product[] $products Produits de la catégorie
- * @property-read string $path_attribute Chemin complet formaté
+ * @property-read string $full_path Chemin complet pour URL frontend
+ * @property-read array $breadcrumbs Fil d'Ariane pour navigation
  */
 class Category extends BaseModel
 {
@@ -99,7 +102,7 @@ class Category extends BaseModel
     /**
      * Attributs ajoutés à la sérialisation
      */
-    protected $appends = ['image_url'];
+    protected $appends = ['image_url', 'full_path'];
 
     // ============================================================================
     // RELATIONS
@@ -163,35 +166,145 @@ class Category extends BaseModel
         );
     }
 
+    /**
+     * Chemin complet pour URL frontend (/categories/slug)
+     */
+    protected function fullPath(): Attribute
+    {
+        return Attribute::make(
+            get: fn() => "/categories/{$this->slug}"
+        );
+    }
+
+    /**
+     * Fil d'Ariane (breadcrumbs) pour navigation
+     */
+    protected function breadcrumbs(): Attribute
+    {
+        return Attribute::make(
+            get: function () {
+                if (!$this->path) {
+                    return [[
+                        'name' => $this->name,
+                        'slug' => $this->slug,
+                        'path' => $this->full_path
+                    ]];
+                }
+
+                try {
+                    $ids = array_filter(explode('/', trim($this->path, '/')));
+
+                    if (empty($ids)) {
+                        return [[
+                            'name' => $this->name,
+                            'slug' => $this->slug,
+                            'path' => $this->full_path
+                        ]];
+                    }
+
+                    // 🔥 FIX: Utilise une approche plus simple sans array_position
+                    $ancestors = Category::whereIn('id', $ids)
+                        ->orderBy('level') // Tri par level au lieu d'array_position
+                        ->get();
+
+                    return $ancestors->map(fn($cat) => [
+                        'name' => $cat->name,
+                        'slug' => $cat->slug,
+                        'path' => "/categories/{$cat->slug}"
+                    ])->toArray();
+                } catch (\Exception $e) {
+                    // En cas d'erreur, retourne au moins la catégorie actuelle
+                    Log::error('Breadcrumbs error: ' . $e->getMessage());
+                    return [[
+                        'name' => $this->name,
+                        'slug' => $this->slug,
+                        'path' => $this->full_path
+                    ]];
+                }
+            }
+        );
+    }
+
     // ============================================================================
-    // MÉTHODES MÉTIER
+    // MÉTHODES MÉTIER - HIÉRARCHIE
     // ============================================================================
+
+    /**
+     * Calcule et met à jour le path hiérarchique
+     * Format: /uuid1/uuid2/uuid3
+     */
+    public function calculatePath(): void
+    {
+        if (!$this->parent_id) {
+            $this->path = "/{$this->id}";
+            $this->level = 0;
+            return;
+        }
+
+        $parent = $this->parent ?? Category::find($this->parent_id);
+
+        if (!$parent) {
+            $this->path = "/{$this->id}";
+            $this->level = 0;
+            return;
+        }
+
+        $this->path = "{$parent->path}/{$this->id}";
+        $this->level = $parent->level + 1;
+    }
+
+    /**
+     * Met à jour récursivement les paths des enfants
+     */
+    public function updateChildrenPaths(): void
+    {
+        $this->children()->each(function (Category $child) {
+            $child->calculatePath();
+            $child->saveQuietly(); // Évite de déclencher les events
+            $child->updateChildrenPaths();
+        });
+    }
 
     /**
      * Récupère tous les ancêtres (parent, grand-parent, etc.)
      *
-     * @return \Illuminate\Support\Collection<Category>
+     * @return Collection<Category>
      */
-    public function ancestors(): \Illuminate\Support\Collection
+    public function ancestors(): Collection
     {
-        $ancestors = collect();
-        $category = $this;
-
-        while ($category->parent) {
-            $ancestors->push($category->parent);
-            $category = $category->parent;
+        if (!$this->path) {
+            return collect();
         }
 
-        return $ancestors->reverse();
+        $ids = explode('/', trim($this->path, '/'));
+        array_pop($ids); // Retire l'ID actuel
+
+        if (empty($ids)) {
+            return collect();
+        }
+
+        return Category::whereIn('id', $ids)
+            ->orderByRaw("array_position(array['" . implode("','", $ids) . "']::uuid[], id::text)")
+            ->get();
     }
 
     /**
-     * Récupère le chemin complet (fil d'Ariane)
+     * Récupère tous les descendants (via le path)
+     *
+     * @return Collection<Category>
+     */
+    public function allDescendants(): Collection
+    {
+        return Category::where('path', 'like', "{$this->path}/%")->get();
+    }
+
+    /**
+     * Récupère le chemin complet (fil d'Ariane texte)
      *
      * @param string $separator Séparateur entre les noms
      * @return string Ex: "Homme > Hauts > T-shirts"
      */
-    public function getFullPath(string $separator = ' > '): string
+    public function getFullPathText(string $separator = ' > '): string
     {
         $ancestors = $this->ancestors();
         $path = $ancestors->pluck('name')->push($this->name);
@@ -200,7 +313,7 @@ class Category extends BaseModel
     }
 
     /**
-     * Récupère le slug complet (pour URL)
+     * Récupère le slug complet (pour URL alternative si besoin)
      *
      * @return string Ex: "homme/hauts/tshirts"
      */
@@ -212,12 +325,16 @@ class Category extends BaseModel
         return $slugs->implode('/');
     }
 
+    // ============================================================================
+    // MÉTHODES MÉTIER - VÉRIFICATIONS
+    // ============================================================================
+
     /**
      * Vérifie si la catégorie est une racine (pas de parent)
      */
     public function isRoot(): bool
     {
-        return is_null($this->parent_id);
+        return is_null($this->parent_id) || $this->level === 0;
     }
 
     /**
@@ -230,7 +347,7 @@ class Category extends BaseModel
 
     /**
      * Vérifie si la catégorie peut avoir des produits
-     * (généralement uniquement les feuilles)
+     * (généralement uniquement les feuilles ou niveau 2+)
      */
     public function canHaveProducts(): bool
     {
@@ -267,6 +384,33 @@ class Category extends BaseModel
 
         $ancestors = $this->ancestors();
         return $ancestors->first(); // La première est toujours le genre
+    }
+
+    // ============================================================================
+    // MÉTHODES MÉTIER - COMPTEURS
+    // ============================================================================
+
+    /**
+     * Met à jour le compteur de produits
+     */
+    public function updateProductsCount(): void
+    {
+        $this->products_count = $this->products()->count();
+        $this->saveQuietly(); // Sans déclencher les événements
+    }
+
+    /**
+     * Récupère le nombre total de produits (incluant les sous-catégories)
+     */
+    public function getTotalProductsCount(): int
+    {
+        $count = $this->products_count;
+
+        foreach ($this->children as $child) {
+            $count += $child->getTotalProductsCount();
+        }
+
+        return $count;
     }
 
     // ============================================================================
@@ -339,6 +483,14 @@ class Category extends BaseModel
         return $query->orderBy('sort_order')->orderBy('name');
     }
 
+    /**
+     * Recherche par slug
+     */
+    public function scopeBySlug($query, string $slug)
+    {
+        return $query->where('slug', $slug);
+    }
+
     // ============================================================================
     // ÉVÉNEMENTS DU MODÈLE
     // ============================================================================
@@ -350,23 +502,23 @@ class Category extends BaseModel
     {
         parent::boot();
 
-        // Calculer le niveau et le chemin avant sauvegarde
-        static::saving(function (Category $category) {
-            if ($category->parent_id) {
-                $parent = Category::find($category->parent_id);
-                if ($parent) {
-                    $category->level = $parent->level + 1;
-                    $category->path = $parent->path . '/' . $category->slug;
-                }
-            } else {
-                $category->level = 0;
-                $category->path = '/' . $category->slug;
+        // Génère automatiquement le path avant création
+        static::creating(function (Category $category) {
+            $category->calculatePath();
+        });
+
+        // Met à jour le path si le parent change
+        static::updating(function (Category $category) {
+            if ($category->isDirty('parent_id')) {
+                $category->calculatePath();
             }
         });
 
-        // Mettre à jour les compteurs après sauvegarde
-        static::saved(function (Category $category) {
-            $category->updateProductsCount();
+        // Met à jour les enfants quand le path change
+        static::updated(function (Category $category) {
+            if ($category->wasChanged('path')) {
+                $category->updateChildrenPaths();
+            }
         });
 
         // Supprimer les enfants en cascade lors de la suppression définitive
@@ -376,16 +528,10 @@ class Category extends BaseModel
                 foreach ($category->children as $child) {
                     $child->forceDelete();
                 }
+            } else {
+                // Soft delete: détacher les produits
+                $category->products()->detach();
             }
         });
-    }
-
-    /**
-     * Met à jour le compteur de produits
-     */
-    public function updateProductsCount(): void
-    {
-        $this->products_count = $this->products()->count();
-        $this->saveQuietly(); // Sans déclencher les événements
     }
 }

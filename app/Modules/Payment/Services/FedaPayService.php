@@ -23,38 +23,68 @@ class FedaPayService extends BaseService
     /**
      * Create FedaPay transaction
      */
+    /**
+     * Create FedaPay transaction
+     */
     public function createTransaction(Payment $payment, Order $order): array
     {
-        // In a real implementation, use FedaPay SDK or HTTP Request
-        // For now, we simulate the response structure
+        $baseUrl = $this->environment === 'live' 
+            ? 'https://api.fedapay.com/v1/transactions' 
+            : 'https://api.fedapay.com/v1/transactions'; // FedaPay uses same URL, key determines env usually, or sandbox URL if different. Docs say same base.
+
+        // Actually FedaPay documentation suggests using the SDK, but HTTP is fine.
+        // Sandbox URL might be different? No, FedaPay handles it by key prefix (sk_sandbox vs sk_live).
         
-        /*
-        $response = Http::withToken($this->apiKey)->post('https://api.fedapay.com/v1/transactions', [
-            'description' => "Order #{$order->order_number}",
-            'amount' => $payment->amount,
-            'currency' => ['iso' => 'XOF'],
-            'callback_url' => route('api.webhooks.fedapay'),
-            'customer' => [
-                'firstname' => $order->customer->first_name ?? 'Guest',
-                'lastname' => $order->customer->last_name ?? 'User',
-                'email' => $order->customer_email,
-                'phone_number' => [
-                    'number' => $order->customer_phone,
-                    'country' => 'bj' // Should be dynamic
-                ]
-            ]
-        ]);
-        */
+        $callbackUrl = route('api.webhooks.fedapay');
 
-        // Mock response for development
-        $token = 'token_' . uniqid();
-        $url = "https://checkout.fedapay.com/{$token}";
+        try {
+            $response = Http::withToken($this->apiKey)
+                ->withHeaders([
+                    'X-Version' => 'v1' // Good practice
+                ])
+                ->post($baseUrl, [
+                    'description' => "Order #{$order->order_number} - Bylin",
+                    'amount' => (int) $payment->amount,
+                    'currency' => ['iso' => 'XOF'],
+                    'callback_url' => $callbackUrl,
+                    'customer' => [
+                        'firstname' => $order->customer_firstname ?? $order->customer->firstname ?? 'Client',
+                        'lastname' => $order->customer_lastname ?? $order->customer->lastname ?? 'Bylin',
+                        'email' => $order->customer_email,
+                        'phone_number' => [
+                            'number' => $order->customer_phone,
+                            'country' => 'bj' // Assuming BJ for now, can be dynamic based on address
+                        ]
+                    ]
+                ]);
 
-        return [
-            'payment_url' => $url,
-            'token' => $token,
-            'transaction_reference' => 'ref_' . uniqid(),
-        ];
+            if ($response->failed()) {
+                throw new \Exception('FedaPay Error: ' . $response->body());
+            }
+
+            $data = $response->json();
+            $token = $data['v1']['token'] ?? $data['token'] ?? null; // Adjust based on actual response structure
+            $url = $data['v1']['url'] ?? $data['url'] ?? null;
+
+            // If structure is entity based
+            if (!$token && isset($data['token'])) $token = $data['token'];
+            if (!$url && isset($data['url'])) $url = $data['url'];
+
+            if (!$token || !$url) {
+                 // Fallback if direct structure failed
+                 throw new \Exception('Invalid response from FedaPay: ' . json_encode($data));
+            }
+
+            return [
+                'payment_url' => $url,
+                'token' => $token,
+                'transaction_reference' => (string) ($data['id'] ?? $data['v1']['id'] ?? uniqid('ref_')),
+            ];
+
+        } catch (\Exception $e) {
+            \Log::error('FedaPay Transaction Creation Failed', ['error' => $e->getMessage()]);
+            throw $e;
+        }
     }
 
     /**

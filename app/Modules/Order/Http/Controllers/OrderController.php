@@ -59,18 +59,34 @@ class OrderController extends ApiController
      */
     public function create(\Modules\Order\Http\Requests\StoreOrderRequest $request): JsonResponse
     {
+        \Log::info('=== ORDER CREATE START ===');
+        \Log::info('Request data:', $request->all());
+        
         $validated = $request->validated();
+        \Log::info('Validated data:', $validated);
 
         $customerId = auth()->id();
+        \Log::info('Customer ID:', ['customer_id' => $customerId]);
+        
         $cart = $this->cartService->getCart($customerId);
+        \Log::info('Cart loaded:', ['cart_id' => $cart->id, 'items_count' => $cart->items->count()]);
 
         if ($cart->isEmpty()) {
+            \Log::error('Cart is empty');
             return $this->errorResponse('Cart is empty', 400);
         }
 
         try {
+            \Log::info('Creating order from cart...');
             $order = $this->orderCreationService->createOrderFromCart($cart, $validated);
+            \Log::info('Order created successfully:', ['order_id' => $order->id]);
         } catch (\Exception $e) {
+            \Log::error('Order creation failed:', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return $this->errorResponse($e->getMessage(), 422);
         }
 

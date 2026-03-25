@@ -52,6 +52,8 @@ class Order extends BaseModel
         'total' => 'integer',
     ];
 
+    protected $appends = ['payment_url'];
+
     // Status constants
     public const STATUS_PENDING = 'pending';
     public const STATUS_PROCESSING = 'processing';
@@ -154,6 +156,14 @@ class Order extends BaseModel
     {
         return in_array($this->status, [self::STATUS_PENDING, self::STATUS_PROCESSING])
             && $this->payment_status !== self::PAYMENT_STATUS_PAID;
+    }
+
+    /**
+     * Get payment URL from metadata
+     */
+    public function getPaymentUrlAttribute(): ?string
+    {
+        return $this->metadata['payment_url'] ?? null;
     }
 
     /**

@@ -18,13 +18,13 @@ class DatabaseSeeder extends Seeder
         $this->call([
             RolesAndPermissionsSeeder::class,
             UserSeeder::class,
-            CustomerSeeder::class, // Creates customers + addresses + wishlists + devices
+            // CustomerSeeder::class, // Creates customers + addresses + wishlists + devices
             CatalogueSeeder::class, // Creates products + brands + cats + attributes
-            StockMovementSeeder::class, // Initializes stock
-            PromotionSeeder::class, // Creates coupons
-            OrderSeeder::class, // Creates orders using customers and products
-            ReviewSeeder::class, // Creates reviews
-            CollectionSeeder::class,
+            // StockMovementSeeder::class, // Initializes stock
+            // PromotionSeeder::class, // Creates coupons
+            // OrderSeeder::class, // Creates orders using customers and products
+            // ReviewSeeder::class, // Creates reviews
+            // CollectionSeeder::class,
         ]);
     }
 }

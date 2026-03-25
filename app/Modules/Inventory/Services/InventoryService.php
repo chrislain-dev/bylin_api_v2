@@ -441,4 +441,50 @@ class InventoryService
         // TODO: Implémenter l'export selon vos besoins
         throw new \BadMethodCallException('Export not implemented yet');
     }
+    /**
+     * Check if stock is sufficient
+     */
+    public function checkStock(int|string $productId, int $quantity, int|string|null $variationId = null): bool
+    {
+        if ($variationId) {
+            $variation = ProductVariation::find($variationId);
+            return $variation && $variation->stock_quantity >= $quantity;
+        }
+
+        $product = Product::find($productId);
+        
+        if (!$product) return false;
+
+        return $product->stock_quantity >= $quantity;
+    }
+
+    /**
+     * Reserve stock for an order
+     */
+    public function reserveStock(int|string $productId, int $quantity, int|string|null $variationId = null, ?string $orderId = null): void
+    {
+        // Reuse adjustStock to ensure consistency and history
+        if ($variationId) {
+            $this->adjustStock([
+                'product_id' => $productId,
+                'reason' => StockReason::ORDER->value,
+                'variations' => [
+                    [
+                        'id' => $variationId,
+                        'quantity' => $quantity,
+                        'operation' => StockOperation::SUB->value
+                    ]
+                ],
+                'notes' => "Order #{$orderId}"
+            ]);
+        } else {
+            $this->adjustStock([
+                'product_id' => $productId,
+                'quantity' => $quantity,
+                'operation' => StockOperation::SUB->value,
+                'reason' => StockReason::ORDER->value,
+                'notes' => "Order #{$orderId}"
+            ]);
+        }
+    }
 }
