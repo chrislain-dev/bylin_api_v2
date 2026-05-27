@@ -328,6 +328,46 @@ class ReviewService extends BaseService
     }
 
     /**
+     * Bulk restore soft-deleted reviews
+     */
+    public function bulkRestore(array $reviewIds): int
+    {
+        try {
+            DB::beginTransaction();
+
+            $reviews = Review::onlyTrashed()->whereIn('id', $reviewIds)->get();
+            $productIds = [];
+
+            foreach ($reviews as $review) {
+                $review->restore();
+
+                if ($review->status === Review::STATUS_APPROVED) {
+                    $productIds[] = $review->product_id;
+                }
+            }
+
+            foreach (array_unique($productIds) as $productId) {
+                $this->updateProductRating($productId);
+            }
+
+            DB::commit();
+
+            Log::info('Bulk restore reviews', [
+                'count' => $reviews->count(),
+                'review_ids' => $reviewIds
+            ]);
+
+            return $reviews->count();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error bulk restoring reviews', [
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
      * Get review statistics
      */
     public function getStatistics(): array

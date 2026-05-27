@@ -265,6 +265,30 @@ class ReviewController extends ApiController
     }
 
     /**
+     * Bulk restore soft-deleted reviews
+     */
+    public function bulkRestore(BulkReviewIdsRequest $request): JsonResponse
+    {
+        try {
+            $count = $this->reviewService->bulkRestore($request->validated('ids'));
+
+            return $this->successResponse(
+                null,
+                "{$count} avis restauré(s) avec succès"
+            );
+        } catch (\Exception $e) {
+            Log::error('Error bulk restoring reviews', [
+                'error' => $e->getMessage()
+            ]);
+
+            return $this->errorResponse(
+                'Erreur lors de la restauration multiple',
+                500
+            );
+        }
+    }
+
+    /**
      * Get review statistics
      */
     public function statistics(): JsonResponse

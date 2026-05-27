@@ -38,6 +38,7 @@ Route::prefix('v1/admin')
             Route::post('/avatar', [\Modules\User\Http\Controllers\ProfileController::class, 'uploadAvatar'])->name('avatar.upload');
             Route::delete('/avatar', [\Modules\User\Http\Controllers\ProfileController::class, 'deleteAvatar'])->name('avatar.delete');
             Route::post('/change-password', [\Modules\User\Http\Controllers\ProfileController::class, 'changePassword'])->name('password.change');
+            Route::delete('/', [\Modules\User\Http\Controllers\ProfileController::class, 'destroy'])->name('destroy');
         });
 
         Route::prefix('authenticity')->name('authenticity.')->middleware('permission:authenticity.manage')->group(function () {
@@ -325,6 +326,7 @@ Route::prefix('v1/admin')
             Route::post('bulk/approve', [\Modules\Reviews\Http\Controllers\Admin\ReviewController::class, 'bulkApprove'])->name('bulk.approve');
             Route::post('bulk/reject', [\Modules\Reviews\Http\Controllers\Admin\ReviewController::class, 'bulkReject'])->name('bulk.reject');
             Route::post('bulk/destroy', [\Modules\Reviews\Http\Controllers\Admin\ReviewController::class, 'bulkDestroy'])->name('bulk.destroy');
+            Route::post('bulk/restore', [\Modules\Reviews\Http\Controllers\Admin\ReviewController::class, 'bulkRestore'])->name('bulk.restore');
             Route::post('{id}/restore', [\Modules\Reviews\Http\Controllers\Admin\ReviewController::class, 'restore'])->name('restore');
         });
         Route::apiResource('reviews', \Modules\Reviews\Http\Controllers\Admin\ReviewController::class)
