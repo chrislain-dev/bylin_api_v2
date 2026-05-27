@@ -13,7 +13,7 @@ class BulkUpdateCustomerStatusRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return true;
+        return $this->user()?->can('customers.update') === true;
     }
 
     /**
@@ -23,7 +23,7 @@ class BulkUpdateCustomerStatusRequest extends FormRequest
     {
         return [
             'ids' => 'required|array|min:1|max:500',
-            'ids.*' => 'required|uuid|exists:customers,id',
+            'ids.*' => 'required|uuid|distinct|exists:customers,id',
             'status' => 'required|in:active,inactive,suspended',
             'reason' => 'nullable|string|max:500',
         ];

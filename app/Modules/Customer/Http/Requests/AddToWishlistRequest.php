@@ -8,33 +8,23 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class AddToWishlistRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        return true;
+        return $this->user() !== null;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     */
     public function rules(): array
     {
         return [
-            'product_id' => 'required|uuid|exists:products,id',
-            'variation_id' => 'nullable|uuid|exists:product_variations,id',
+            'product_id' => ['required', 'uuid', 'exists:products,id'],
+            'notes' => ['nullable', 'string', 'max:500'],
         ];
     }
 
-    /**
-     * Get custom messages for validator errors.
-     */
     public function messages(): array
     {
         return [
             'product_id.exists' => 'The selected product does not exist.',
-            'variation_id.exists' => 'The selected product variation does not exist.',
         ];
     }
 }

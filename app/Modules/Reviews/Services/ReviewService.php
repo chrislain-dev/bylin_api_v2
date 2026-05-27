@@ -130,14 +130,7 @@ class ReviewService extends BaseService
         try {
             DB::beginTransaction();
 
-            $updateData = ['status' => Review::STATUS_REJECTED];
-
-            // Optionally store rejection reason in metadata
-            if ($reason) {
-                $updateData['rejection_reason'] = $reason;
-            }
-
-            $review->update($updateData);
+            $review->update(['status' => Review::STATUS_REJECTED]);
 
             // Update product average rating (in case it was previously approved)
             $this->updateProductRating($review->product_id);
@@ -146,7 +139,7 @@ class ReviewService extends BaseService
 
             Log::info('Review rejected', [
                 'review_id' => $review->id,
-                'reason' => $reason
+                'has_reason' => filled($reason)
             ]);
 
             return $review->fresh(['customer', 'product', 'media']);

@@ -10,13 +10,13 @@ class CancelOrderRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return $this->user() !== null;
     }
 
     public function rules(): array
     {
         return [
-            'reason' => 'required|string|max:255',
+            'reason' => ['required', 'string', 'max:255'],
         ];
     }
 }

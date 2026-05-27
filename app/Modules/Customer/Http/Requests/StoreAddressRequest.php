@@ -8,43 +8,40 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class StoreAddressRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        return true;
+        return $this->user() !== null;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     */
+    protected function prepareForValidation(): void
+    {
+        if ($this->filled('country_code') && ! $this->filled('country')) {
+            $this->merge(['country' => strtoupper((string) $this->input('country_code'))]);
+        }
+    }
+
     public function rules(): array
     {
         return [
-            'type' => 'required|in:billing,shipping,both',
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'company' => 'nullable|string|max:255',
-            'address_line_1' => 'required|string|max:255',
-            'address_line_2' => 'nullable|string|max:255',
-            'city' => 'required|string|max:100',
-            'state' => 'nullable|string|max:100',
-            'postal_code' => 'required|string|max:20',
-            'country_code' => 'required|string|size:2', // ISO 3166-1 alpha-2
-            'phone' => 'nullable|string|max:20',
-            'is_default' => 'boolean',
+            'type' => ['required', 'in:billing,shipping'],
+            'first_name' => ['required', 'string', 'max:100'],
+            'last_name' => ['required', 'string', 'max:100'],
+            'phone' => ['required', 'string', 'max:30'],
+            'address_line_1' => ['required', 'string', 'max:255'],
+            'address_line_2' => ['nullable', 'string', 'max:255'],
+            'city' => ['required', 'string', 'max:100'],
+            'state' => ['nullable', 'string', 'max:100'],
+            'postal_code' => ['nullable', 'string', 'max:20'],
+            'country' => ['required', 'string', 'max:100'],
+            'is_default' => ['sometimes', 'boolean'],
         ];
     }
 
-    /**
-     * Get custom messages for validator errors.
-     */
     public function messages(): array
     {
         return [
-            'type.in' => 'Address type must be billing, shipping, or both.',
-            'country_code.size' => 'Country code must be a 2-letter ISO code (e.g., US, FR).',
+            'type.in' => 'Address type must be billing or shipping.',
+            'country.required' => 'Country is required.',
         ];
     }
 }

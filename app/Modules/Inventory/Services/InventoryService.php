@@ -7,12 +7,14 @@ namespace Modules\Inventory\Services;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Database\Eloquent\Model;
 use Modules\Catalogue\Models\Product;
 use Modules\Catalogue\Models\ProductVariation;
 use Modules\Inventory\Models\StockMovement;
 use Modules\Inventory\Enums\StockOperation;
 use Modules\Inventory\Enums\StockReason;
+use Modules\Order\Models\Order;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 class InventoryService
@@ -20,12 +22,6 @@ class InventoryService
 
     public function adjustStock(array $data): array
     {
-        Log::info('InventoryService::adjustStock START', [
-            'product_id' => $data['product_id'],
-            'reason' => $data['reason'],
-            'has_variations' => isset($data['variations'])
-        ]);
-
         return DB::transaction(function () use ($data) {
             $product = Product::withCount('variations')
                 ->lockForUpdate()
@@ -98,13 +94,85 @@ class InventoryService
         });
     }
 
+
+
+    /**
+     * Ajuste plusieurs produits/variations dans une transaction unique.
+     * Si une ligne échoue, aucun stock n'est modifié.
+     *
+     * @param array<int, array<string, mixed>> $adjustments
+     * @return array<int, StockMovement>
+     */
+    public function bulkAdjustStock(array $adjustments): array
+    {
+        return DB::transaction(function () use ($adjustments) {
+            $movements = [];
+
+            foreach ($adjustments as $adjustment) {
+                if (!empty($adjustment['variation_id'])) {
+                    $variation = ProductVariation::query()
+                        ->with('product')
+                        ->lockForUpdate()
+                        ->findOrFail($adjustment['variation_id']);
+
+                    $product = $variation->product;
+
+                    if (!$product) {
+                        throw new \InvalidArgumentException('La variation sélectionnée n\'est rattachée à aucun produit.');
+                    }
+
+                    $movements[] = $this->performAdjustment(
+                        target: $variation,
+                        parentProduct: $product,
+                        quantity: (int) $adjustment['quantity'],
+                        operation: StockOperation::from($adjustment['operation']),
+                        reason: StockReason::from($adjustment['reason']),
+                        notes: $adjustment['notes'] ?? null
+                    );
+
+                    $product->update([
+                        'stock_quantity' => $product->variations()->sum('stock_quantity'),
+                    ]);
+
+                    if (method_exists($product, 'updateStockStatus')) {
+                        $product->updateStockStatus();
+                    }
+
+                    continue;
+                }
+
+                $product = Product::query()
+                    ->lockForUpdate()
+                    ->findOrFail($adjustment['product_id']);
+
+                if ($product->variations()->exists()) {
+                    throw new \InvalidArgumentException(
+                        "Le produit {$product->id} possède des variations. Ajustez ses variations directement."
+                    );
+                }
+
+                $movements[] = $this->performAdjustment(
+                    target: $product,
+                    parentProduct: $product,
+                    quantity: (int) $adjustment['quantity'],
+                    operation: StockOperation::from($adjustment['operation']),
+                    reason: StockReason::from($adjustment['reason']),
+                    notes: $adjustment['notes'] ?? null
+                );
+            }
+
+            return $movements;
+        });
+    }
     private function performAdjustment(
         Model $target,
         Product $parentProduct,
         int $quantity,
         StockOperation $operation,
         StockReason $reason,
-        ?string $notes
+        ?string $notes,
+        ?string $referenceId = null,
+        ?string $referenceType = null
     ): StockMovement {
         $currentStock = (int) $target->stock_quantity;
 
@@ -143,6 +211,8 @@ class InventoryService
             'quantity'        => $delta,
             'quantity_before' => $currentStock,
             'quantity_after'  => $newStock,
+            'reference_id'    => $referenceId,
+            'reference_type'  => $referenceType,
             'notes'           => $notes,
             'created_by'      => Auth::id(),
         ]);
@@ -255,14 +325,6 @@ class InventoryService
             ->where('stock_quantity', '>', 0)
             ->whereRaw('stock_quantity > COALESCE(low_stock_threshold, 10)')
             ->count(); // ✅ COUNT au lieu de SUM
-
-        Log::info('Stock counts', [
-            'total_products' => $totalProducts,
-            'in_stock' => $totalItemsInStock,
-            'low_stock' => $lowStockCount,
-            'out_of_stock' => $outOfStockCount
-        ]);
-
         // ========================================================================
         // VALEUR DU STOCK (ici on garde SUM car on veut la valeur totale)
         // ========================================================================
@@ -438,8 +500,84 @@ class InventoryService
 
     public function export(array $filters = [], string $format = 'csv'): string
     {
-        // TODO: Implémenter l'export selon vos besoins
-        throw new \BadMethodCallException('Export not implemented yet');
+        $format = strtolower($format);
+
+        if (!in_array($format, ['csv'], true)) {
+            throw new \InvalidArgumentException('Format d\'export non supporté. Format accepté : csv.');
+        }
+
+        $query = Product::query()
+            ->with(['brand'])
+            ->where('track_inventory', true);
+
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        if (!empty($filters['brand_id'])) {
+            $query->where('brand_id', $filters['brand_id']);
+        }
+
+        if (!empty($filters['category_id'])) {
+            $query->whereHas('categories', function ($q) use ($filters) {
+                $q->where('categories.id', $filters['category_id']);
+            });
+        }
+
+        if (!empty($filters['low_stock_only'])) {
+            $query->where('stock_quantity', '>', 0)
+                ->whereRaw('stock_quantity <= COALESCE(low_stock_threshold, 10)');
+        }
+
+        $directory = 'exports/inventory';
+        $filename = $directory . '/inventory-' . now()->format('Ymd-His') . '.csv';
+
+        Storage::disk('public')->makeDirectory($directory);
+
+        $handle = fopen(Storage::disk('public')->path($filename), 'w');
+
+        if ($handle === false) {
+            throw new \RuntimeException('Impossible de créer le fichier d\'export.');
+        }
+
+        fputcsv($handle, [
+            'id',
+            'name',
+            'sku',
+            'brand',
+            'status',
+            'stock_quantity',
+            'low_stock_threshold',
+            'price',
+            'cost_price',
+            'stock_value',
+            'updated_at',
+        ]);
+
+        $query->orderBy('name')->chunkById(500, function ($products) use ($handle) {
+            foreach ($products as $product) {
+                $stockQuantity = (int) $product->stock_quantity;
+                $unitCost = (float) ($product->cost_price ?? $product->price ?? 0);
+
+                fputcsv($handle, [
+                    $product->id,
+                    $product->name,
+                    $product->sku,
+                    $product->brand?->name,
+                    $product->status,
+                    $stockQuantity,
+                    $product->low_stock_threshold,
+                    $product->price,
+                    $product->cost_price,
+                    round($stockQuantity * $unitCost, 2),
+                    optional($product->updated_at)->toIso8601String(),
+                ]);
+            }
+        });
+
+        fclose($handle);
+
+        return '/storage/' . $filename;
     }
     /**
      * Check if stock is sufficient
@@ -459,32 +597,127 @@ class InventoryService
     }
 
     /**
-     * Reserve stock for an order
+     * Reserve stock for an order.
      */
     public function reserveStock(int|string $productId, int $quantity, int|string|null $variationId = null, ?string $orderId = null): void
     {
-        // Reuse adjustStock to ensure consistency and history
-        if ($variationId) {
-            $this->adjustStock([
-                'product_id' => $productId,
-                'reason' => StockReason::ORDER->value,
-                'variations' => [
-                    [
-                        'id' => $variationId,
-                        'quantity' => $quantity,
-                        'operation' => StockOperation::SUB->value
-                    ]
-                ],
-                'notes' => "Order #{$orderId}"
-            ]);
-        } else {
-            $this->adjustStock([
-                'product_id' => $productId,
-                'quantity' => $quantity,
-                'operation' => StockOperation::SUB->value,
-                'reason' => StockReason::ORDER->value,
-                'notes' => "Order #{$orderId}"
-            ]);
+        DB::transaction(function () use ($productId, $quantity, $variationId, $orderId) {
+            if ($variationId) {
+                $variation = ProductVariation::query()
+                    ->with('product')
+                    ->lockForUpdate()
+                    ->findOrFail($variationId);
+
+                if ((string) $variation->product_id !== (string) $productId) {
+                    throw new \InvalidArgumentException('La variation sélectionnée ne correspond pas au produit fourni.');
+                }
+
+                $product = $variation->product;
+
+                $this->performAdjustment(
+                    target: $variation,
+                    parentProduct: $product,
+                    quantity: $quantity,
+                    operation: StockOperation::SUB,
+                    reason: StockReason::ORDER,
+                    notes: "Commande #{$orderId}",
+                    referenceId: $orderId,
+                    referenceType: Order::class,
+                );
+
+                $product->update(['stock_quantity' => $product->variations()->sum('stock_quantity')]);
+
+                if (method_exists($product, 'updateStockStatus')) {
+                    $product->updateStockStatus();
+                }
+
+                return;
+            }
+
+            $product = Product::query()
+                ->lockForUpdate()
+                ->findOrFail($productId);
+
+            $this->performAdjustment(
+                target: $product,
+                parentProduct: $product,
+                quantity: $quantity,
+                operation: StockOperation::SUB,
+                reason: StockReason::ORDER,
+                notes: "Commande #{$orderId}",
+                referenceId: $orderId,
+                referenceType: Order::class,
+            );
+        });
+    }
+
+    /**
+     * Release stock for a product/variation after an order cancellation.
+     */
+    public function releaseStock(int|string $productId, int $quantity, int|string|null $variationId = null, ?string $orderId = null): void
+    {
+        DB::transaction(function () use ($productId, $quantity, $variationId, $orderId) {
+            if ($variationId) {
+                $variation = ProductVariation::query()
+                    ->with('product')
+                    ->lockForUpdate()
+                    ->findOrFail($variationId);
+
+                if ((string) $variation->product_id !== (string) $productId) {
+                    throw new \InvalidArgumentException('La variation sélectionnée ne correspond pas au produit fourni.');
+                }
+
+                $product = $variation->product;
+
+                $this->performAdjustment(
+                    target: $variation,
+                    parentProduct: $product,
+                    quantity: $quantity,
+                    operation: StockOperation::ADD,
+                    reason: StockReason::RETURN,
+                    notes: "Libération stock commande #{$orderId}",
+                    referenceId: $orderId,
+                    referenceType: Order::class,
+                );
+
+                $product->update(['stock_quantity' => $product->variations()->sum('stock_quantity')]);
+
+                if (method_exists($product, 'updateStockStatus')) {
+                    $product->updateStockStatus();
+                }
+
+                return;
+            }
+
+            $product = Product::query()
+                ->lockForUpdate()
+                ->findOrFail($productId);
+
+            $this->performAdjustment(
+                target: $product,
+                parentProduct: $product,
+                quantity: $quantity,
+                operation: StockOperation::ADD,
+                reason: StockReason::RETURN,
+                notes: "Libération stock commande #{$orderId}",
+                referenceId: $orderId,
+                referenceType: Order::class,
+            );
+        });
+    }
+
+    /**
+     * Release all reserved stock for an order. Must be called inside the order cancellation transaction.
+     */
+    public function releaseOrderStock(Order $order): void
+    {
+        foreach ($order->items as $item) {
+            $this->releaseStock(
+                productId: $item->product_id,
+                quantity: (int) $item->quantity,
+                variationId: $item->variation_id,
+                orderId: $order->id,
+            );
         }
     }
 }

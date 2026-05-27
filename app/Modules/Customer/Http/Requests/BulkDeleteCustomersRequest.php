@@ -13,7 +13,7 @@ class BulkDeleteCustomersRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return true;
+        return $this->user()?->can('customers.delete') === true;
     }
 
     /**
@@ -22,8 +22,8 @@ class BulkDeleteCustomersRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|uuid|exists:customers,id',
+            'ids' => 'required|array|min:1|max:500',
+            'ids.*' => 'required|uuid|distinct|exists:customers,id',
         ];
     }
 

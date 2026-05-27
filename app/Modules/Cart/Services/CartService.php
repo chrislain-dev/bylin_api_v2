@@ -6,89 +6,96 @@ namespace Modules\Cart\Services;
 
 use Illuminate\Support\Facades\DB;
 use Modules\Cart\Models\Cart;
-use Modules\Cart\Models\CartItem;
 use Modules\Catalogue\Models\Product;
 use Modules\Catalogue\Models\ProductVariation;
+use Modules\Core\Exceptions\BusinessException;
+use Modules\Core\Exceptions\OutOfStockException;
 use Modules\Core\Services\BaseService;
 use Modules\Promotion\Services\PromotionService;
 
 class CartService extends BaseService
 {
-    protected ?PromotionService $promotionService;
+    public function __construct(
+        protected PromotionService $promotionService
+    ) {}
 
-    public function __construct()
-    {
-        // Lazy load PromotionService to avoid circular dependency if any
-        // In a real app, use dependency injection
-    }
-
-    /**
-     * Get or create a cart for the current session/user
-     */
     public function getCart(?string $customerId = null, ?string $sessionId = null): Cart
     {
         if ($customerId) {
-            // Find customer's active cart
             $cart = Cart::forCustomer($customerId)->active()->first();
 
-            if (!$cart) {
-                $cart = Cart::create([
-                    'customer_id' => $customerId,
-                ]);
+            if (! $cart) {
+                $cart = Cart::create(['customer_id' => $customerId]);
             }
-        } else {
-            // Find guest cart by session
-            $cart = Cart::forSession($sessionId)->active()->first();
 
-            if (!$cart) {
-                $cart = Cart::create([
-                    'session_id' => $sessionId,
-                ]);
-            }
+            return $cart->load('items.product.brand', 'items.product.categories', 'items.variation');
         }
 
-        return $cart->load('items.product', 'items.variation');
+        if (! $sessionId) {
+            throw new BusinessException('A session identifier is required for guest carts.');
+        }
+
+        $cart = Cart::forSession($sessionId)->active()->first();
+
+        if (! $cart) {
+            $cart = Cart::create(['session_id' => $sessionId]);
+        }
+
+        return $cart->load('items.product.brand', 'items.product.categories', 'items.variation');
     }
 
-    /**
-     * Add item to cart
-     */
     public function addItem(Cart $cart, array $data): Cart
     {
         return DB::transaction(function () use ($cart, $data) {
             $productId = $data['product_id'];
             $variationId = $data['variation_id'] ?? null;
-            $quantity = $data['quantity'] ?? 1;
+            $quantity = (int) ($data['quantity'] ?? 1);
             $options = $data['options'] ?? null;
 
-            // Validate product/variation existence and stock
-            $product = Product::findOrFail($productId);
-            $price = $product->price;
+            $product = Product::query()->lockForUpdate()->findOrFail($productId);
 
-            if ($variationId) {
-                $variation = ProductVariation::where('product_id', $productId)
-                    ->findOrFail($variationId);
-                $price = $variation->price;
-                
-                if ($variation->stock_quantity < $quantity) {
-                    throw new \Modules\Core\Exceptions\OutOfStockException("Insufficient stock for variation: {$variation->variation_name}");
-                }
-            } else {
-                if ($product->stock_quantity < $quantity) {
-                    throw new \Modules\Core\Exceptions\OutOfStockException("Insufficient stock for product: {$product->name}");
-                }
+            $status = $product->status instanceof \BackedEnum ? $product->status->value : (string) $product->status;
+
+            if (! in_array($status, ['active', 'preorder'], true)) {
+                throw new BusinessException('This product is not available for purchase.');
             }
 
-            // Check if item already exists in cart
+            $price = (int) $product->price;
+            $availableStock = (int) $product->stock_quantity;
+
+            if ($variationId) {
+                $variation = ProductVariation::query()
+                    ->where('product_id', $productId)
+                    ->lockForUpdate()
+                    ->findOrFail($variationId);
+
+                if (! $variation->is_active) {
+                    throw new BusinessException('This product variation is not available.');
+                }
+
+                $price = (int) $variation->price;
+                $availableStock = (int) $variation->stock_quantity;
+            }
+
             $existingItem = $cart->items()
                 ->where('product_id', $productId)
-                ->when($variationId, function ($q) use ($variationId) {
-                    return $q->where('variation_id', $variationId);
-                })
+                ->when($variationId, fn ($query) => $query->where('variation_id', $variationId))
+                ->when(! $variationId, fn ($query) => $query->whereNull('variation_id'))
+                ->lockForUpdate()
                 ->first();
 
+            $requestedQuantity = $quantity + (int) ($existingItem?->quantity ?? 0);
+
+            if ($product->track_inventory && $availableStock < $requestedQuantity) {
+                throw new OutOfStockException("Insufficient stock. Available: {$availableStock}");
+            }
+
             if ($existingItem) {
-                $existingItem->incrementQuantity($quantity);
+                $existingItem->update([
+                    'quantity' => $requestedQuantity,
+                    'price' => $price,
+                    'options' => $options ?? $existingItem->options,
+                ]);
             } else {
                 $cart->items()->create([
                     'product_id' => $productId,
@@ -103,61 +110,61 @@ class CartService extends BaseService
         });
     }
 
-    /**
-     * Update item quantity
-     */
     public function updateItem(Cart $cart, string $itemId, int $quantity): Cart
     {
-        $item = $cart->items()->findOrFail($itemId);
+        return DB::transaction(function () use ($cart, $itemId, $quantity) {
+            $item = $cart->items()->with('product', 'variation')->lockForUpdate()->findOrFail($itemId);
 
-        if ($quantity <= 0) {
-            $item->delete();
-        } else {
-            // Check stock
-            if ($item->variation_id) {
-                $stock = $item->variation->stock_quantity;
-            } else {
-                $stock = $item->product->stock_quantity;
+            if ($quantity <= 0) {
+                $item->delete();
+                return $this->recalculateCart($cart);
             }
 
-            if ($stock < $quantity) {
-                throw new \Modules\Core\Exceptions\OutOfStockException("Insufficient stock. Available: {$stock}");
+            $product = Product::query()->lockForUpdate()->findOrFail($item->product_id);
+            $stock = (int) $product->stock_quantity;
+
+            if ($item->variation_id) {
+                $variation = ProductVariation::query()
+                    ->where('product_id', $item->product_id)
+                    ->lockForUpdate()
+                    ->findOrFail($item->variation_id);
+
+                $stock = (int) $variation->stock_quantity;
+            }
+
+            if ($product->track_inventory && $stock < $quantity) {
+                throw new OutOfStockException("Insufficient stock. Available: {$stock}");
             }
 
             $item->updateQuantity($quantity);
-        }
 
-        return $this->recalculateCart($cart);
+            return $this->recalculateCart($cart);
+        });
     }
 
-    /**
-     * Remove item from cart
-     */
     public function removeItem(Cart $cart, string $itemId): Cart
     {
-        $cart->items()->where('id', $itemId)->delete();
-        return $this->recalculateCart($cart);
+        return DB::transaction(function () use ($cart, $itemId) {
+            $cart->items()->where('id', $itemId)->delete();
+            return $this->recalculateCart($cart);
+        });
     }
 
-    /**
-     * Clear cart
-     */
     public function clearCart(Cart $cart): void
     {
-        $cart->items()->delete();
-        $cart->update([
-            'coupon_code' => null,
-            'discount_amount' => 0,
-            'shipping_amount' => 0,
-            'tax_amount' => 0,
-            'subtotal' => 0,
-            'total' => 0,
-        ]);
+        DB::transaction(function () use ($cart) {
+            $cart->items()->delete();
+            $cart->update([
+                'coupon_code' => null,
+                'discount_amount' => 0,
+                'shipping_amount' => 0,
+                'tax_amount' => 0,
+                'subtotal' => 0,
+                'total' => 0,
+            ]);
+        });
     }
 
-    /**
-     * Merge guest cart into customer cart
-     */
     public function mergeCarts(Cart $guestCart, Cart $customerCart): Cart
     {
         return DB::transaction(function () use ($guestCart, $customerCart) {
@@ -171,55 +178,52 @@ class CartService extends BaseService
             }
 
             $guestCart->delete();
-            
+
             return $this->recalculateCart($customerCart);
         });
     }
 
-    /**
-     * Apply coupon to cart
-     */
     public function applyCoupon(Cart $cart, string $code): Cart
     {
-        // This would use PromotionService to validate and calculate discount
-        // For now, simple placeholder logic
-        
-        // $promotion = $this->promotionService->validateCoupon($code, $cart);
-        // $discount = $promotion->calculateDiscount($cart->subtotal);
-        
-        // Placeholder
-        $cart->coupon_code = strtoupper($code);
-        // $cart->discount_amount = ...
-        
-        return $this->recalculateCart($cart);
+        return DB::transaction(function () use ($cart, $code) {
+            $cart = $this->recalculateCart($cart);
+            $promotion = $this->promotionService->validateCoupon($code, $cart);
+            $discount = (int) $this->promotionService->calculateDiscount($promotion, $cart);
+
+            $cart->update([
+                'coupon_code' => strtoupper(trim($code)),
+                'discount_amount' => max(0, $discount),
+            ]);
+
+            return $this->recalculateCart($cart->fresh());
+        });
     }
 
-    /**
-     * Recalculate cart totals
-     */
+    public function removeCoupon(Cart $cart): Cart
+    {
+        $cart->update([
+            'coupon_code' => null,
+            'discount_amount' => 0,
+        ]);
+
+        return $this->recalculateCart($cart->fresh());
+    }
+
     public function recalculateCart(Cart $cart): Cart
     {
-        $cart->refresh();
-        
-        $subtotal = $cart->items->sum('subtotal');
+        $cart->load('items.product.categories', 'items.variation');
+
+        $subtotal = (int) $cart->items->sum('subtotal');
+        $taxRate = (float) config('cart.tax_rate', 0);
+        $taxAmount = (int) round($subtotal * $taxRate);
+        $discountAmount = (int) min(max(0, $cart->discount_amount ?? 0), $subtotal);
+
         $cart->subtotal = $subtotal;
-
-        // Calculate Tax (e.g., 18% VAT if applicable, or 0)
-        $taxRate = config('cart.tax_rate', 0);
-        $cart->tax_amount = $subtotal * $taxRate;
-
-        // Calculate Shipping (placeholder, should use ShippingService)
-        // $cart->shipping_amount = ...
-
-        // Re-calculate discount if coupon exists
-        if ($cart->coupon_code) {
-            // $discount = ...
-            // $cart->discount_amount = $discount;
-        }
-
-        $cart->total = $cart->subtotal + $cart->tax_amount + $cart->shipping_amount - $cart->discount_amount;
+        $cart->tax_amount = $taxAmount;
+        $cart->total = max(0, $subtotal + (int) $cart->shipping_amount + $taxAmount - $discountAmount);
+        $cart->discount_amount = $discountAmount;
         $cart->save();
 
-        return $cart->load('items.product', 'items.variation');
+        return $cart->load('items.product.brand', 'items.product.categories', 'items.variation');
     }
 }

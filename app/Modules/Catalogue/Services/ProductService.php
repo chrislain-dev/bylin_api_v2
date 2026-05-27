@@ -6,6 +6,7 @@ namespace Modules\Catalogue\Services;
 
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 use Modules\Catalogue\Enums\ProductStatus;
 use Modules\Catalogue\Models\Product;
 use Modules\Core\Services\BaseService;
@@ -532,9 +533,79 @@ class ProductService extends BaseService
 
     public function exportProducts(array $filters = []): string
     {
-        $this->logInfo('Products exported', ['filters' => $filters]);
+        $directory = 'exports';
+        $filename = 'products-' . now()->format('Y-m-d-His') . '.csv';
+        $relativePath = $directory . '/' . $filename;
 
-        return '/exports/products-' . now()->format('d/m/Y') . '.csv';
+        Storage::disk('local')->makeDirectory($directory);
+
+        $absolutePath = Storage::disk('local')->path($relativePath);
+        $handle = fopen($absolutePath, 'w');
+
+        if ($handle === false) {
+            throw new \RuntimeException('Impossible de créer le fichier d’export des produits.');
+        }
+
+        fputcsv($handle, [
+            'id',
+            'name',
+            'sku',
+            'brand',
+            'status',
+            'price',
+            'compare_price',
+            'cost_price',
+            'stock_quantity',
+            'low_stock_threshold',
+            'track_inventory',
+            'is_featured',
+            'is_preorder_enabled',
+            'requires_authenticity',
+            'created_at',
+            'updated_at',
+        ]);
+
+        $query = Product::query()
+            ->with('brand')
+            ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
+            ->when($filters['brand_id'] ?? null, fn ($query, $brandId) => $query->where('brand_id', $brandId))
+            ->when($filters['category_id'] ?? null, function ($query, $categoryId) {
+                $query->whereHas('categories', fn ($categoryQuery) => $categoryQuery->where('categories.id', $categoryId));
+            })
+            ->when($filters['search'] ?? null, fn ($query, $search) => $query->search($search))
+            ->orderBy('created_at', 'desc');
+
+        $query->chunkById(500, function ($products) use ($handle) {
+            foreach ($products as $product) {
+                fputcsv($handle, [
+                    $product->id,
+                    $product->name,
+                    $product->sku,
+                    $product->brand?->name,
+                    $product->status instanceof ProductStatus ? $product->status->value : (string) $product->status,
+                    $product->price,
+                    $product->compare_price,
+                    $product->cost_price,
+                    $product->stock_quantity,
+                    $product->low_stock_threshold,
+                    $product->track_inventory ? 1 : 0,
+                    $product->is_featured ? 1 : 0,
+                    $product->is_preorder_enabled ? 1 : 0,
+                    $product->requires_authenticity ? 1 : 0,
+                    optional($product->created_at)->toDateTimeString(),
+                    optional($product->updated_at)->toDateTimeString(),
+                ]);
+            }
+        });
+
+        fclose($handle);
+
+        $this->logInfo('Products exported', [
+            'filters' => $filters,
+            'path' => $relativePath,
+        ]);
+
+        return $relativePath;
     }
 
     private function determineStockStatus(int $quantity): string

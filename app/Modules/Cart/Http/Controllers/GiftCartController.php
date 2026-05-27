@@ -6,72 +6,60 @@ namespace Modules\Cart\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\Cart\Http\Requests\ContributeToGiftCartRequest;
+use Modules\Cart\Http\Requests\ConvertToGiftCartRequest;
 use Modules\Cart\Services\GiftCartService;
 use Modules\Core\Http\Controllers\ApiController;
+use Throwable;
 
-/**
- * Gift Cart Controller
- */
 class GiftCartController extends ApiController
 {
     public function __construct(
         private GiftCartService $giftCartService
     ) {}
 
-    /**
-     * Convert regular cart to gift cart
-     */
-    public function convert(Request $request): JsonResponse
+    public function convert(ConvertToGiftCartRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'cart_id' => 'required|uuid|exists:carts,id',
-            'message' => 'nullable|string|max:500',
-            'expiration_days' => 'nullable|integer|min:1|max:90',
-        ]);
+        try {
+            $validated = $request->validated();
 
-        $giftCart = $this->giftCartService->convertToGiftCart(
-            $validated['cart_id'],
-            $request->user()->id,
-            $validated['message'] ?? null,
-            $validated['expiration_days'] ?? null
-        );
-
-        $link = $this->giftCartService->getGiftCartLink($giftCart->gift_cart_token);
+            $giftCart = $this->giftCartService->convertToGiftCart(
+                $validated['cart_id'],
+                $request->user()->id,
+                $validated['message'] ?? null,
+                $validated['expiration_days'] ?? null
+            );
+        } catch (Throwable $e) {
+            return $this->errorResponse($e->getMessage(), method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 422);
+        }
 
         return $this->successResponse([
             'gift_cart' => $giftCart,
-            'share_link' => $link,
+            'share_link' => $this->giftCartService->getGiftCartLink($giftCart->gift_cart_token),
         ], 'Gift cart created successfully');
     }
 
-    /**
-     * Get gift cart by token (public)
-     */
     public function show(string $token): JsonResponse
     {
         $giftCart = $this->giftCartService->getByToken($token);
+
         return $this->successResponse($giftCart);
     }
 
-    /**
-     * Add contribution to gift cart (public)
-     */
-    public function contribute(string $token, Request $request): JsonResponse
+    public function contribute(string $token, ContributeToGiftCartRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|email',
-            'amount' => 'required|numeric|min:1',
-            'message' => 'nullable|string|max:500',
-        ]);
-
+        $validated = $request->validated();
         $validated['customer_id'] = auth('sanctum')->id();
 
-        $contributor = $this->giftCartService->addContribution(
-            $token,
-            $validated,
-            $validated['amount']
-        );
+        try {
+            $contributor = $this->giftCartService->addContribution(
+                $token,
+                $validated,
+                (int) $validated['amount']
+            );
+        } catch (Throwable $e) {
+            return $this->errorResponse($e->getMessage(), method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 422);
+        }
 
         return $this->createdResponse(
             $contributor,
@@ -79,20 +67,27 @@ class GiftCartController extends ApiController
         );
     }
 
-    /**
-     * Get contributions for a gift cart
-     */
     public function contributions(string $token): JsonResponse
     {
         $giftCart = $this->giftCartService->getByToken($token);
-        $contributors = $giftCart->contributors()->with('customer')->get();
+        $contributors = $giftCart->contributors()
+            ->select([
+                'id',
+                'gift_cart_id',
+                'contributor_name',
+                'contribution_amount',
+                'contribution_percentage',
+                'payment_status',
+                'message',
+                'created_at',
+            ])
+            ->where('payment_status', 'completed')
+            ->latest()
+            ->get();
 
         return $this->successResponse($contributors);
     }
 
-    /**
-     * Get customer's gift carts
-     */
     public function myGiftCarts(Request $request): JsonResponse
     {
         $giftCarts = $request->user()
@@ -105,19 +100,19 @@ class GiftCartController extends ApiController
         return $this->paginatedResponse($giftCarts);
     }
 
-    /**
-     * Cancel gift cart
-     */
     public function cancel(string $token, Request $request): JsonResponse
     {
         $giftCart = $this->giftCartService->getByToken($token);
 
-        // Verify ownership
         if ($giftCart->gift_cart_owner_id !== $request->user()->id) {
             return $this->forbiddenResponse('You are not the owner of this gift cart');
         }
 
-        $this->giftCartService->cancelGiftCart($giftCart->id);
+        try {
+            $this->giftCartService->cancelGiftCart($giftCart->id);
+        } catch (Throwable $e) {
+            return $this->errorResponse($e->getMessage(), method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 422);
+        }
 
         return $this->successResponse(null, 'Gift cart cancelled');
     }

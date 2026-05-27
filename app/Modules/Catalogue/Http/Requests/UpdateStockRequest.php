@@ -11,7 +11,7 @@ class UpdateStockRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return $this->user()?->can('inventory.manage') === true;
     }
 
     public function rules(): array

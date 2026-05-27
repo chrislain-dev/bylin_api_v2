@@ -8,41 +8,27 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class UpdateReviewRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        // Authorization handled by controller (user owns the review)
-        return true;
+        return $this->user() !== null;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     */
     public function rules(): array
     {
         return [
-            'rating' => 'sometimes|integer|min:1|max:5',
-            'title' => 'sometimes|string|max:100',
-            'comment' => 'sometimes|string|min:10|max:1000',
-            'images' => 'nullable|array|max:5',
-            'images.*' => 'image|mimes:jpeg,png,jpg,webp|max:5120', // 5MB
+            'rating' => ['sometimes', 'required', 'integer', 'min:1', 'max:5'],
+            'title' => ['nullable', 'string', 'max:255'],
+            'comment' => ['nullable', 'string', 'max:5000'],
         ];
     }
 
-    /**
-     * Get custom messages for validator errors.
-     */
     public function messages(): array
     {
         return [
-            'rating.min' => 'Rating must be at least 1 star.',
-            'rating.max' => 'Rating cannot exceed 5 stars.',
-            'comment.min' => 'Your review must be at least 10 characters long.',
-            'comment.max' => 'Your review cannot exceed 1000 characters.',
-            'images.max' => 'You can upload a maximum of 5 images.',
-            'images.*.max' => 'Each image must not exceed 5MB.',
+            'rating.min' => 'La note minimale est 1.',
+            'rating.max' => 'La note maximale est 5.',
+            'title.max' => 'Le titre ne peut pas dépasser 255 caractères.',
+            'comment.max' => 'Le commentaire ne peut pas dépasser 5000 caractères.',
         ];
     }
 }

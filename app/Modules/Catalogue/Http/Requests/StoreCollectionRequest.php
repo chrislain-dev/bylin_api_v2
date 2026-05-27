@@ -19,8 +19,7 @@ class StoreCollectionRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        // Vérifier si l'utilisateur est admin (ajuste selon ton système de permissions)
-        return $this->user() && ($this->user()->hasRole('admin') || $this->user()->can('super_admin'));
+        return $this->user()?->can('catalogue.create') === true;
     }
 
     /**

@@ -11,6 +11,7 @@ use Modules\Catalogue\Services\BrandService;
 use Modules\Core\Http\Controllers\ApiController;
 use Modules\Catalogue\Http\Requests\StoreBrandRequest;
 use Modules\Catalogue\Http\Requests\UpdateBrandRequest;
+use Modules\Catalogue\Http\Requests\BulkBrandIdsRequest;
 
 class BrandController extends ApiController
 {
@@ -93,17 +94,14 @@ class BrandController extends ApiController
 
     public function forceDelete(string $id): JsonResponse
     {
-        // $this->brandService->forceDeleteBrand($id);
+        $this->brandService->forceDeleteBrand($id);
 
         return $this->successResponse(null, 'Marque supprimée définitivement');
     }
 
-    public function bulkDestroy(Request $request): JsonResponse
+    public function bulkDestroy(BulkBrandIdsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:brands,id'
-        ]);
+        $validated = $request->validated();
 
         $brands = Brand::whereIn('id', $validated['ids'])->get();
         foreach ($brands as $brand) {
@@ -118,12 +116,9 @@ class BrandController extends ApiController
         );
     }
 
-    public function bulkRestore(Request $request): JsonResponse
+    public function bulkRestore(BulkBrandIdsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:brands,id'
-        ]);
+        $validated = $request->validated();
 
         $count = Brand::onlyTrashed()
             ->whereIn('id', $validated['ids'])
@@ -135,12 +130,9 @@ class BrandController extends ApiController
         );
     }
 
-    public function bulkForceDelete(Request $request): JsonResponse
+    public function bulkForceDelete(BulkBrandIdsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:brands,id'
-        ]);
+        $validated = $request->validated();
 
         $brands = Brand::withTrashed()
             ->whereIn('id', $validated['ids'])

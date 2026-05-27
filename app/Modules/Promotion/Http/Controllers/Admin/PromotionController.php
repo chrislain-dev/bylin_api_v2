@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Http\Controllers\ApiController;
 use Modules\Promotion\Models\Promotion;
 use Modules\Promotion\Services\PromotionService;
+use Modules\Promotion\Http\Requests\BulkPromotionIdsRequest;
 use Modules\Promotion\Http\Requests\StorePromotionRequest;
 use Modules\Promotion\Http\Requests\UpdatePromotionRequest;
 
@@ -26,8 +27,6 @@ class PromotionController extends ApiController
     public function index(Request $request): JsonResponse
     {
         try {
-            Log::info('Promotion index called', ['params' => $request->all()]);
-
             $query = Promotion::query()->withCount('usages');
 
             // Filtre par recherche (insensible à la casse)
@@ -94,8 +93,6 @@ class PromotionController extends ApiController
             $perPage = min($request->get('per_page', 15), 100);
             $promotions = $query->paginate($perPage);
 
-            Log::info('Promotions fetched', ['count' => $promotions->count()]);
-
             return $this->successResponse($promotions);
 
         } catch (\Exception $e) {
@@ -131,7 +128,6 @@ class PromotionController extends ApiController
         } catch (\Exception $e) {
             Log::error('Error creating promotion', [
                 'message' => $e->getMessage(),
-                'data' => $request->all()
             ]);
 
             return $this->errorResponse(
@@ -259,15 +255,10 @@ class PromotionController extends ApiController
     /**
      * Suppression multiple
      */
-    public function bulkDestroy(Request $request): JsonResponse
+    public function bulkDestroy(BulkPromotionIdsRequest $request): JsonResponse
     {
         try {
-            $request->validate([
-                'ids' => 'required|array',
-                'ids.*' => 'exists:promotions,id'
-            ]);
-
-            $count = Promotion::whereIn('id', $request->ids)->delete();
+            $count = Promotion::query()->whereIn('id', $request->validated('ids'))->delete();
 
             Log::info('Bulk delete promotions', ['count' => $count]);
 
@@ -291,16 +282,11 @@ class PromotionController extends ApiController
     /**
      * Restauration multiple
      */
-    public function bulkRestore(Request $request): JsonResponse
+    public function bulkRestore(BulkPromotionIdsRequest $request): JsonResponse
     {
         try {
-            $request->validate([
-                'ids' => 'required|array',
-                'ids.*' => 'exists:promotions,id'
-            ]);
-
             $promotions = Promotion::onlyTrashed()
-                ->whereIn('id', $request->ids)
+                ->whereIn('id', $request->validated('ids'))
                 ->get();
 
             $count = 0;

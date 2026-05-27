@@ -11,7 +11,7 @@ class StorePromotionRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return $this->user()?->can('promotions.create') === true;
     }
 
     public function rules(): array

@@ -13,10 +13,11 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
 
-        // --- AJOUTER CETTE LIGNE OBLIGATOIREMENT ---
-        // Elle active le support des cookies/sessions pour Sanctum sur les routes API
+        // Elle active le support des cookies/sessions pour Sanctum sur les routes API.
         $middleware->statefulApi();
 
+        // En-têtes HTTP de sécurité globaux, sans casser le développement local.
+        $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
 
         // API-first: Return JSON error instead of redirecting to login
         $middleware->redirectGuestsTo(function ($request) {
@@ -34,6 +35,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'verified' => \App\Http\Middleware\EnsureEmailIsVerified::class,
             'fedapay.signature' => \App\Http\Middleware\VerifyFedaPaySignature::class,
             'track.login' => \App\Http\Middleware\TrackLoginActivity::class,
+            'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
+            'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
+            'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

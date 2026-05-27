@@ -13,7 +13,7 @@ class MarkAsFakeRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return true;
+        return $this->user()?->can('authenticity.manage') === true;
     }
 
     /**

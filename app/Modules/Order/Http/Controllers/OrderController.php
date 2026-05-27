@@ -6,107 +6,109 @@ namespace Modules\Order\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Modules\Cart\Services\CartService;
 use Modules\Core\Http\Controllers\ApiController;
+use Modules\Order\Http\Requests\CancelOrderRequest;
+use Modules\Order\Http\Requests\StoreOrderRequest;
 use Modules\Order\Models\Order;
 use Modules\Order\Services\OrderCreationService;
 use Modules\Order\Services\OrderService;
 
 class OrderController extends ApiController
 {
-    protected OrderService $orderService;
-    protected OrderCreationService $orderCreationService;
-    protected CartService $cartService;
-
     public function __construct(
-        OrderService $orderService,
-        OrderCreationService $orderCreationService,
-        CartService $cartService
-    ) {
-        $this->orderService = $orderService;
-        $this->orderCreationService = $orderCreationService;
-        $this->cartService = $cartService;
-    }
+        protected OrderService $orderService,
+        protected OrderCreationService $orderCreationService,
+        protected CartService $cartService,
+    ) {}
 
     /**
-     * Get customer orders
+     * Get customer orders.
      */
     public function index(Request $request): JsonResponse
     {
         $orders = Order::query()
             ->with(['items.product', 'statusHistories'])
-            ->where('customer_id', auth()->id())
+            ->where('customer_id', $request->user()->id)
             ->latest()
-            ->paginate($request->per_page ?? 15);
+            ->paginate((int) $request->input('per_page', 15));
 
         return $this->successResponse($orders);
     }
 
     /**
-     * Get order details
+     * Get order details.
      */
-    public function show(string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
         $order = Order::with(['items.product', 'items.variation', 'statusHistories', 'payment', 'shipment'])
-            ->where('customer_id', auth()->id())
+            ->where('customer_id', $request->user()->id)
             ->findOrFail($id);
-            
+
         return $this->successResponse($order);
     }
 
     /**
-     * Create new order from cart
+     * Create new order from cart.
      */
-    public function create(\Modules\Order\Http\Requests\StoreOrderRequest $request): JsonResponse
+    public function create(StoreOrderRequest $request): JsonResponse
     {
-        \Log::info('=== ORDER CREATE START ===');
-        \Log::info('Request data:', $request->all());
-        
         $validated = $request->validated();
-        \Log::info('Validated data:', $validated);
-
-        $customerId = auth()->id();
-        \Log::info('Customer ID:', ['customer_id' => $customerId]);
-        
+        $customerId = $request->user()->id;
         $cart = $this->cartService->getCart($customerId);
-        \Log::info('Cart loaded:', ['cart_id' => $cart->id, 'items_count' => $cart->items->count()]);
 
         if ($cart->isEmpty()) {
-            \Log::error('Cart is empty');
-            return $this->errorResponse('Cart is empty', 400);
+            return $this->errorResponse('Le panier est vide.', 400);
         }
 
         try {
-            \Log::info('Creating order from cart...');
-            $order = $this->orderCreationService->createOrderFromCart($cart, $validated);
-            \Log::info('Order created successfully:', ['order_id' => $order->id]);
-        } catch (\Exception $e) {
-            \Log::error('Order creation failed:', [
+            $order = $this->orderCreationService->createOrderFromCart($cart, $validated)
+                ->load(['items.product', 'items.variation', 'payment']);
+        } catch (\Throwable $e) {
+            Log::warning('Order creation failed', [
+                'customer_id' => $customerId,
                 'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
             ]);
+
             return $this->errorResponse($e->getMessage(), 422);
         }
 
-        return $this->successResponse($order, 'Order created successfully', 201);
+        return $this->successResponse($order, 'Commande créée avec succès.', 201);
     }
 
     /**
-     * Cancel order
+     * Cancel order.
      */
-    public function cancel(string $id, \Modules\Order\Http\Requests\CancelOrderRequest $request): JsonResponse
+    public function cancel(CancelOrderRequest $request, string $id): JsonResponse
     {
-        $order = Order::where('customer_id', auth()->id())
+        $order = Order::where('customer_id', $request->user()->id)
             ->findOrFail($id);
 
         try {
-            $order = $this->orderService->cancelOrder($order, $request->reason, auth()->id());
-        } catch (\Exception $e) {
+            $order = $this->orderService->cancelOrder($order, $request->validated('reason'), $request->user()->id);
+        } catch (\Throwable $e) {
             return $this->errorResponse($e->getMessage(), 422);
         }
 
-        return $this->successResponse($order, 'Order cancelled successfully');
+        return $this->successResponse($order, 'Commande annulée avec succès.');
+    }
+
+    /**
+     * Get customer orders containing preorder products.
+     */
+    public function preorders(Request $request): JsonResponse
+    {
+        $orders = Order::query()
+            ->with(['items.product', 'items.variation', 'statusHistories'])
+            ->where('customer_id', $request->user()->id)
+            ->whereHas('items.product', function ($query) {
+                $query->where('is_preorder_enabled', true)
+                    ->orWhere('status', 'preorder');
+            })
+            ->latest()
+            ->paginate((int) $request->input('per_page', 15));
+
+        return $this->successResponse($orders);
     }
 }

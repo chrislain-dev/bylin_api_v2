@@ -27,6 +27,15 @@ class Cart extends BaseModel
         'total',
         'metadata',
         'expires_at',
+
+        'is_gift_cart',
+        'gift_cart_token',
+        'gift_cart_status',
+        'gift_cart_target_amount',
+        'gift_cart_paid_amount',
+        'gift_cart_owner_id',
+        'gift_cart_message',
+        'gift_cart_expires_at',
     ];
 
     protected $casts = [
@@ -37,27 +46,33 @@ class Cart extends BaseModel
         'total' => 'integer',
         'metadata' => 'array',
         'expires_at' => 'datetime',
+
+        'is_gift_cart' => 'boolean',
+        'gift_cart_target_amount' => 'integer',
+        'gift_cart_paid_amount' => 'integer',
+        'gift_cart_expires_at' => 'datetime',
     ];
 
-    /**
-     * Get the customer that owns the cart
-     */
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
     }
 
-    /**
-     * Get the cart items
-     */
+    public function giftCartOwner(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class, 'gift_cart_owner_id');
+    }
+
     public function items(): HasMany
     {
         return $this->hasMany(CartItem::class);
     }
 
-    /**
-     * Scope for active carts (not expired)
-     */
+    public function contributors(): HasMany
+    {
+        return $this->hasMany(GiftCartContributor::class, 'gift_cart_id');
+    }
+
     public function scopeActive($query)
     {
         return $query->where(function ($q) {
@@ -66,85 +81,52 @@ class Cart extends BaseModel
         });
     }
 
-    /**
-     * Scope for guest carts
-     */
     public function scopeGuest($query)
     {
         return $query->whereNull('customer_id')
                      ->whereNotNull('session_id');
     }
 
-    /**
-     * Scope for customer carts
-     */
     public function scopeForCustomer($query, string $customerId)
     {
         return $query->where('customer_id', $customerId);
     }
 
-    /**
-     * Scope for session carts
-     */
     public function scopeForSession($query, string $sessionId)
     {
         return $query->where('session_id', $sessionId);
     }
 
-    /**
-     * Check if cart is empty
-     */
     public function isEmpty(): bool
     {
         return $this->items()->count() === 0;
     }
 
-    /**
-     * Check if cart is expired
-     */
     public function isExpired(): bool
     {
-        if (!$this->expires_at) {
-            return false;
-        }
-
-        return $this->expires_at->isPast();
+        return $this->expires_at?->isPast() ?? false;
     }
 
-    /**
-     * Get total items count
-     */
     public function getTotalItemsAttribute(): int
     {
-        return $this->items->sum('quantity');
+        return (int) $this->items->sum('quantity');
     }
 
-    /**
-     * Calculate subtotal from items
-     */
     public function calculateSubtotal(): float
     {
         return (float) $this->items->sum('subtotal');
     }
 
-    /**
-     * Calculate total
-     */
     public function calculateTotal(): float
     {
-        return $this->subtotal + $this->tax_amount + $this->shipping_amount - $this->discount_amount;
+        return (float) max(0, $this->subtotal + $this->tax_amount + $this->shipping_amount - $this->discount_amount);
     }
 
-    /**
-     * Set expiration date (default: 30 days for guest, null for customer)
-     */
     public function setExpiration(?int $days = null): void
     {
         if ($this->customer_id) {
-            // Customer carts don't expire
             $this->expires_at = null;
         } else {
-            // Guest carts expire after specified days (default: 30)
             $expirationDays = $days ?? config('cart.guest_cart_expiration_days', 30);
             $this->expires_at = now()->addDays($expirationDays);
         }
@@ -152,16 +134,12 @@ class Cart extends BaseModel
         $this->save();
     }
 
-    /**
-     * Boot the model
-     */
     protected static function boot(): void
     {
         parent::boot();
 
         static::creating(function ($cart) {
-            // Set expiration for guest carts
-            if (!$cart->customer_id && !$cart->expires_at) {
+            if (! $cart->customer_id && ! $cart->expires_at) {
                 $cart->expires_at = now()->addDays(
                     config('cart.guest_cart_expiration_days', 30)
                 );

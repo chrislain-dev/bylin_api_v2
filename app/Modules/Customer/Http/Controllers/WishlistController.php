@@ -7,38 +7,26 @@ namespace Modules\Customer\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Core\Http\Controllers\ApiController;
+use Modules\Customer\Http\Requests\AddToWishlistRequest;
 use Modules\Customer\Models\Wishlist;
 
 class WishlistController extends ApiController
 {
-    /**
-     * Get customer's wishlist
-     */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $customerId = auth()->id();
-
-        $wishlist = Wishlist::with(['product.brand', 'product.category'])
-            ->forCustomer($customerId)
+        $wishlist = Wishlist::with(['product.brand', 'product.categories'])
+            ->forCustomer($request->user()->id)
             ->latest()
             ->get();
 
         return $this->successResponse($wishlist);
     }
 
-    /**
-     * Add product to wishlist
-     */
-    public function add(Request $request): JsonResponse
+    public function add(AddToWishlistRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'product_id' => 'required|uuid|exists:products,id',
-            'notes' => 'nullable|string|max:500',
-        ]);
+        $validated = $request->validated();
+        $customerId = $request->user()->id;
 
-        $customerId = auth()->id();
-
-        // Check if already in wishlist
         if (Wishlist::hasProduct($customerId, $validated['product_id'])) {
             return $this->errorResponse('Product already in wishlist', 409);
         }
@@ -49,51 +37,35 @@ class WishlistController extends ApiController
             $validated['notes'] ?? null
         );
 
-        $wishlistItem->load('product');
-
-        return $this->successResponse($wishlistItem, 'Product added to wishlist', 201);
+        return $this->successResponse(
+            $wishlistItem->load('product.brand', 'product.categories'),
+            'Product added to wishlist',
+            201
+        );
     }
 
-    /**
-     * Remove product from wishlist
-     */
-    public function remove(string $productId): JsonResponse
+    public function remove(string $productId, Request $request): JsonResponse
     {
-        $customerId = auth()->id();
+        $deleted = Wishlist::removeProduct($request->user()->id, $productId);
 
-        $deleted = Wishlist::removeProduct($customerId, $productId);
-
-        if (!$deleted) {
+        if (! $deleted) {
             return $this->errorResponse('Product not found in wishlist', 404);
         }
 
         return $this->successResponse(null, 'Product removed from wishlist');
     }
 
-    /**
-     * Check if product is in wishlist
-     */
-    public function check(string $productId): JsonResponse
+    public function check(string $productId, Request $request): JsonResponse
     {
-        $customerId = auth()->id();
-
-        $inWishlist = Wishlist::hasProduct($customerId, $productId);
-
-        return $this->successResponse(['in_wishlist' => $inWishlist]);
+        return $this->successResponse([
+            'in_wishlist' => Wishlist::hasProduct($request->user()->id, $productId),
+        ]);
     }
 
-    /**
-     * Clear entire wishlist
-     */
-    public function clear(): JsonResponse
+    public function clear(Request $request): JsonResponse
     {
-        $customerId = auth()->id();
+        $count = Wishlist::forCustomer($request->user()->id)->delete();
 
-        $count = Wishlist::forCustomer($customerId)->delete();
-
-        return $this->successResponse(
-            ['count' => $count],
-            'Wishlist cleared'
-        );
+        return $this->successResponse(['count' => $count], 'Wishlist cleared');
     }
 }

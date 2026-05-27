@@ -9,7 +9,7 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Ensure the authenticated user is an admin
+ * Ensure the authenticated user can access the admin back-office.
  */
 class EnsureUserIsAdmin
 {
@@ -20,21 +20,20 @@ class EnsureUserIsAdmin
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unauthenticated',
             ], 401);
         }
 
-        // Check if user has admin role using Spatie Permission
-        if (!$user->hasRole(['super_admin', 'admin'])) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Forbidden. Admin access required.',
-            ], 403);
+        if ($user->hasRole('super_admin') || $user->can('admin.access')) {
+            return $next($request);
         }
 
-        return $next($request);
+        return response()->json([
+            'success' => false,
+            'message' => 'Forbidden. Admin access required.',
+        ], 403);
     }
 }

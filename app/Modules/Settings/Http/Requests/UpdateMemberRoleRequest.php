@@ -11,21 +11,21 @@ class UpdateMemberRoleRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return $this->user()?->can('settings.update') === true;
     }
 
     public function rules(): array
     {
         return [
-            'role' => ['required', Rule::in(['admin', 'manager', 'customer'])],
+            'role' => ['required', Rule::in(['admin', 'manager', 'super_admin'])],
         ];
     }
 
     public function messages(): array
     {
         return [
-            'role.required' => 'Le rôle est requis',
-            'role.in' => 'Le rôle sélectionné est invalide',
+            'role.required' => 'Le rôle est requis.',
+            'role.in' => 'Le rôle sélectionné est invalide.',
         ];
     }
 }

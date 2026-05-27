@@ -11,6 +11,9 @@ use Modules\Catalogue\Services\CategoryService;
 use Modules\Core\Http\Controllers\ApiController;
 use Modules\Catalogue\Http\Requests\StoreCategoryRequest;
 use Modules\Catalogue\Http\Requests\UpdateCategoryRequest;
+use Modules\Catalogue\Http\Requests\BulkCategoryIdsRequest;
+use Modules\Catalogue\Http\Requests\MoveCategoryRequest;
+use Modules\Catalogue\Http\Requests\ReorderCategoriesRequest;
 
 /**
  * Contrôleur de gestion des catégories
@@ -223,12 +226,9 @@ class CategoryController extends ApiController
      * @param Request $request Requête contenant les IDs
      * @return JsonResponse Message de confirmation
      */
-    public function bulkDestroy(Request $request): JsonResponse
+    public function bulkDestroy(BulkCategoryIdsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:categories,id'
-        ]);
+        $validated = $request->validated();
 
         $count = 0;
         $errors = [];
@@ -263,12 +263,9 @@ class CategoryController extends ApiController
      * @param Request $request Requête contenant les IDs
      * @return JsonResponse Message de confirmation
      */
-    public function bulkRestore(Request $request): JsonResponse
+    public function bulkRestore(BulkCategoryIdsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:categories,id'
-        ]);
+        $validated = $request->validated();
 
         $count = Category::onlyTrashed()
             ->whereIn('id', $validated['ids'])
@@ -286,12 +283,9 @@ class CategoryController extends ApiController
      * @param Request $request Requête contenant les IDs
      * @return JsonResponse Message de confirmation
      */
-    public function bulkForceDelete(Request $request): JsonResponse
+    public function bulkForceDelete(BulkCategoryIdsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:categories,id'
-        ]);
+        $validated = $request->validated();
 
         $categories = Category::withTrashed()
             ->whereIn('id', $validated['ids'])
@@ -316,11 +310,9 @@ class CategoryController extends ApiController
      * @param string $id Identifiant de la catégorie à déplacer
      * @return JsonResponse Catégorie déplacée
      */
-    public function move(Request $request, string $id): JsonResponse
+    public function move(MoveCategoryRequest $request, string $id): JsonResponse
     {
-        $validated = $request->validate([
-            'parent_id' => 'nullable|exists:categories,id'
-        ]);
+        $validated = $request->validated();
 
         $category = $this->categoryService->moveCategory(
             $id,
@@ -336,13 +328,9 @@ class CategoryController extends ApiController
      * @param Request $request Requête contenant le nouvel ordre
      * @return JsonResponse Message de confirmation
      */
-    public function reorder(Request $request): JsonResponse
+    public function reorder(ReorderCategoriesRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'order' => 'required|array',
-            'order.*.id' => 'required|exists:categories,id',
-            'order.*.sort_order' => 'required|integer|min:0'
-        ]);
+        $validated = $request->validated();
 
         $order = collect($validated['order'])->pluck('sort_order', 'id')->toArray();
 

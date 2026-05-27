@@ -4,24 +4,20 @@ declare(strict_types=1);
 
 namespace Modules\Cart\Services;
 
-use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Cart\Enums\GiftCartStatus;
+use Modules\Cart\Events\GiftCartCompleted;
+use Modules\Cart\Events\GiftCartContributionReceived;
+use Modules\Cart\Events\GiftCartCreated;
+use Modules\Cart\Events\GiftCartExpired;
 use Modules\Cart\Models\Cart;
 use Modules\Cart\Models\GiftCartContributor;
 use Modules\Core\Exceptions\BusinessException;
 use Modules\Core\Services\BaseService;
 
-/**
- * Gift Cart Service
- * 
- * Handles business logic for gift cart creation and collaborative payments
- */
 class GiftCartService extends BaseService
 {
-    /**
-     * Convert a regular cart to a gift cart
-     */
     public function convertToGiftCart(
         string $cartId,
         string $ownerId,
@@ -29,7 +25,11 @@ class GiftCartService extends BaseService
         ?int $expirationDays = 30
     ): Cart {
         return $this->transaction(function () use ($cartId, $ownerId, $message, $expirationDays) {
-            $cart = Cart::findOrFail($cartId);
+            $cart = Cart::query()
+                ->where('customer_id', $ownerId)
+                ->with('items')
+                ->lockForUpdate()
+                ->findOrFail($cartId);
 
             if ($cart->is_gift_cart) {
                 throw new BusinessException('This cart is already a gift cart');
@@ -39,16 +39,20 @@ class GiftCartService extends BaseService
                 throw new BusinessException('Cannot create gift cart with empty cart');
             }
 
+            if ((int) $cart->total <= 0) {
+                throw new BusinessException('Cannot create gift cart with a zero total amount');
+            }
+
             $token = $this->generateUniqueToken();
-            $expiresAt = $expirationDays 
-                ? now()->addDays($expirationDays) 
-                : now()->addDays(config('ecommerce.gift_cart.default_expiration_days', 30));
+            $expiresAt = now()->addDays(
+                $expirationDays ?: (int) config('ecommerce.gift_cart.default_expiration_days', 30)
+            );
 
             $cart->update([
                 'is_gift_cart' => true,
                 'gift_cart_token' => $token,
                 'gift_cart_status' => GiftCartStatus::PENDING,
-                'gift_cart_target_amount' => $cart->total,
+                'gift_cart_target_amount' => (int) $cart->total,
                 'gift_cart_paid_amount' => 0,
                 'gift_cart_owner_id' => $ownerId,
                 'gift_cart_message' => $message,
@@ -57,20 +61,15 @@ class GiftCartService extends BaseService
 
             $this->logInfo('Gift cart created', [
                 'cart_id' => $cart->id,
-                'token' => $token,
                 'owner_id' => $ownerId,
             ]);
 
-            // Dispatch event
-            event(new \Modules\Cart\Events\GiftCartCreated($cart));
+            event(new GiftCartCreated($cart->fresh(['items.product', 'contributors'])));
 
-            return $cart->fresh();
+            return $cart->fresh(['items.product', 'contributors']);
         });
     }
 
-    /**
-     * Get gift cart by token
-     */
     public function getByToken(string $token): Cart
     {
         $cart = Cart::where('gift_cart_token', $token)
@@ -78,55 +77,42 @@ class GiftCartService extends BaseService
             ->with(['items.product', 'contributors'])
             ->firstOrFail();
 
-        // Check if expired
         if ($cart->gift_cart_expires_at && $cart->gift_cart_expires_at->isPast()) {
             if ($cart->gift_cart_status !== GiftCartStatus::EXPIRED) {
                 $cart->update(['gift_cart_status' => GiftCartStatus::EXPIRED]);
             }
         }
 
-        return $cart;
+        return $cart->fresh(['items.product', 'contributors']);
     }
 
-    /**
-     * Add contribution to gift cart
-     */
     public function addContribution(
         string $token,
         array $contributorData,
-        float $amount
+        int $amount
     ): GiftCartContributor {
         return $this->transaction(function () use ($token, $contributorData, $amount) {
-            $cart = $this->getByToken($token);
+            $cart = Cart::where('gift_cart_token', $token)
+                ->where('is_gift_cart', true)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-            // Validate cart status
-            if ($cart->gift_cart_status === GiftCartStatus::COMPLETED) {
+            $this->ensureCanReceiveContribution($cart);
+
+            $remainingAmount = max(0, (int) $cart->gift_cart_target_amount - (int) $cart->gift_cart_paid_amount);
+
+            if ($remainingAmount <= 0) {
                 throw new BusinessException('This gift cart is already fully funded');
             }
 
-            if ($cart->gift_cart_status === GiftCartStatus::EXPIRED) {
-                throw new BusinessException('This gift cart has expired');
-            }
+            $amount = min($amount, $remainingAmount);
+            $percentage = round(($amount / (int) $cart->gift_cart_target_amount) * 100, 2);
 
-            if ($cart->gift_cart_status === GiftCartStatus::CANCELLED) {
-                throw new BusinessException('This gift cart has been cancelled');
-            }
-
-            // Validate amount
-            $remainingAmount = $cart->gift_cart_target_amount - $cart->gift_cart_paid_amount;
-            if ($amount > $remainingAmount) {
-                $amount = $remainingAmount; // Cap at remaining amount
-            }
-
-            $percentage = ($amount / $cart->gift_cart_target_amount) * 100;
-
-            // Check minimum contribution
-            $minPercentage = config('ecommerce.gift_cart.min_contribution_percentage', 5);
-            if ($percentage < $minPercentage) {
+            $minPercentage = (float) config('ecommerce.gift_cart.min_contribution_percentage', 5);
+            if ($percentage < $minPercentage && $amount < $remainingAmount) {
                 throw new BusinessException("Minimum contribution is {$minPercentage}%");
             }
 
-            // Create contributor
             $contributor = GiftCartContributor::create([
                 'gift_cart_id' => $cart->id,
                 'contributor_name' => $contributorData['name'],
@@ -138,38 +124,37 @@ class GiftCartService extends BaseService
                 'message' => $contributorData['message'] ?? null,
             ]);
 
-            $this->logInfo('Contribution added', [
+            $this->logInfo('Gift cart contribution created', [
                 'cart_id' => $cart->id,
                 'contributor_id' => $contributor->id,
-                'amount' => $amount,
             ]);
 
-            return $contributor;
+            return $contributor->fresh(['giftCart']);
         });
     }
 
-    /**
-     * Process contribution payment
-     */
     public function processContributionPayment(string $contributorId, string $paymentId): void
     {
         $this->transaction(function () use ($contributorId, $paymentId) {
-            $contributor = GiftCartContributor::findOrFail($contributorId);
+            $contributor = GiftCartContributor::query()->lockForUpdate()->findOrFail($contributorId);
+
+            if ($contributor->isPaid()) {
+                return;
+            }
+
             $contributor->markAsPaid($paymentId);
 
-            $cart = $contributor->giftCart;
-            $cart->increment('gift_cart_paid_amount', $contributor->contribution_amount);
+            $cart = Cart::query()->lockForUpdate()->findOrFail($contributor->gift_cart_id);
+            $cart->increment('gift_cart_paid_amount', (int) $contributor->contribution_amount);
+            $cart->refresh();
 
-            // Check if fully funded
-            if ($cart->gift_cart_paid_amount >= $cart->gift_cart_target_amount) {
+            if ((int) $cart->gift_cart_paid_amount >= (int) $cart->gift_cart_target_amount) {
                 $this->completeGiftCart($cart->id);
             } else {
-                // Update to partial status
                 $cart->update(['gift_cart_status' => GiftCartStatus::PARTIAL]);
             }
 
-            // Dispatch event
-            event(new \Modules\Cart\Events\GiftCartContributionReceived($cart, $contributor));
+            event(new GiftCartContributionReceived($cart->fresh(), $contributor->fresh()));
 
             $this->logInfo('Contribution payment processed', [
                 'cart_id' => $cart->id,
@@ -178,39 +163,28 @@ class GiftCartService extends BaseService
         });
     }
 
-    /**
-     * Complete gift cart and create order
-     */
     protected function completeGiftCart(string $cartId): void
     {
-        $cart = Cart::findOrFail($cartId);
-        
+        $cart = Cart::query()->lockForUpdate()->findOrFail($cartId);
+
         $cart->update(['gift_cart_status' => GiftCartStatus::COMPLETED]);
 
-        // Dispatch event to create order
-        event(new \Modules\Cart\Events\GiftCartCompleted($cart));
+        event(new GiftCartCompleted($cart->fresh(['items.product', 'contributors'])));
 
         $this->logInfo('Gift cart completed', ['cart_id' => $cartId]);
     }
 
-    /**
-     * Cancel gift cart
-     */
     public function cancelGiftCart(string $cartId, ?string $reason = null): bool
     {
         return $this->transaction(function () use ($cartId, $reason) {
-            $cart = Cart::findOrFail($cartId);
+            $cart = Cart::query()->lockForUpdate()->findOrFail($cartId);
 
             if ($cart->gift_cart_status === GiftCartStatus::COMPLETED) {
                 throw new BusinessException('Cannot cancel a completed gift cart');
             }
 
-            // Check if there are paid contributions (need refunds)
-            $paidContributions = $cart->contributors()->paid()->exists();
-            if ($paidContributions) {
-                throw new BusinessException(
-                    'Gift cart has paid contributions. Process refunds before cancelling.'
-                );
+            if ($cart->contributors()->paid()->exists()) {
+                throw new BusinessException('Gift cart has paid contributions. Process refunds before cancelling.');
             }
 
             $cart->update(['gift_cart_status' => GiftCartStatus::CANCELLED]);
@@ -224,51 +198,59 @@ class GiftCartService extends BaseService
         });
     }
 
-    /**
-     * Get gift cart link
-     */
     public function getGiftCartLink(string $token): string
     {
-        $baseUrl = config('app.url');
-        return "{$baseUrl}/gift-cart/{$token}";
+        return rtrim((string) config('app.url'), '/') . "/gift-cart/{$token}";
     }
 
-    /**
-     * Generate unique token for gift cart
-     */
     protected function generateUniqueToken(): string
     {
         do {
-            $token = 'gc_' . Str::random(16);
+            $token = 'gc_' . Str::random(32);
         } while (Cart::where('gift_cart_token', $token)->exists());
 
         return $token;
     }
 
-    /**
-     * Check for expired gift carts
-     */
     public function checkExpiredGiftCarts(): int
     {
         $expiredCount = 0;
 
-        $expiredCarts = Cart::where('is_gift_cart', true)
-            ->where('gift_cart_status', '!=', GiftCartStatus::COMPLETED)
-            ->where('gift_cart_status', '!=', GiftCartStatus::EXPIRED)
+        Cart::where('is_gift_cart', true)
+            ->whereNotIn('gift_cart_status', [GiftCartStatus::COMPLETED, GiftCartStatus::EXPIRED])
             ->where('gift_cart_expires_at', '<', now())
-            ->get();
+            ->chunkById(100, function ($expiredCarts) use (&$expiredCount) {
+                foreach ($expiredCarts as $cart) {
+                    $cart->update(['gift_cart_status' => GiftCartStatus::EXPIRED]);
 
-        foreach ($expiredCarts as $cart) {
-            $cart->update(['gift_cart_status' => GiftCartStatus::EXPIRED]);
+                    if (config('ecommerce.gift_cart.refund_on_expiration', true)) {
+                        event(new GiftCartExpired($cart));
+                    }
 
-            // Handle refunds if configured
-            if (config('ecommerce.gift_cart.refund_on_expiration', true)) {
-                event(new \Modules\Cart\Events\GiftCartExpired($cart));
-            }
-
-            $expiredCount++;
-        }
+                    $expiredCount++;
+                }
+            });
 
         return $expiredCount;
+    }
+
+    private function ensureCanReceiveContribution(Cart $cart): void
+    {
+        if ($cart->gift_cart_expires_at && $cart->gift_cart_expires_at->isPast()) {
+            $cart->update(['gift_cart_status' => GiftCartStatus::EXPIRED]);
+            throw new BusinessException('This gift cart has expired');
+        }
+
+        if ($cart->gift_cart_status === GiftCartStatus::COMPLETED) {
+            throw new BusinessException('This gift cart is already fully funded');
+        }
+
+        if ($cart->gift_cart_status === GiftCartStatus::EXPIRED) {
+            throw new BusinessException('This gift cart has expired');
+        }
+
+        if ($cart->gift_cart_status === GiftCartStatus::CANCELLED) {
+            throw new BusinessException('This gift cart has been cancelled');
+        }
     }
 }

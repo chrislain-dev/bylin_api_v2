@@ -8,37 +8,29 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class GenerateAuthenticityCodesRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        return true;
+        return $this->user()?->can('authenticity.manage') === true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     */
     public function rules(): array
     {
         return [
-            'product_id' => 'required|uuid|exists:products,id',
-            'quantity' => 'required|integer|min:1|max:10000',
-            'batch_number' => 'nullable|string|max:50',
-            'expiry_date' => 'nullable|date|after:today',
+            'product_id' => ['required', 'uuid', 'exists:products,id'],
+            'quantity' => ['required', 'integer', 'min:1', 'max:1000'],
+            'serial_prefix' => ['nullable', 'string', 'max:10', 'regex:/^[A-Za-z0-9_-]+$/'],
         ];
     }
 
-    /**
-     * Get custom messages for validator errors.
-     */
     public function messages(): array
     {
         return [
-            'product_id.exists' => 'The specified product does not exist.',
-            'quantity.min' => 'You must generate at least 1 code.',
-            'quantity.max' => 'You cannot generate more than 10,000 codes at once.',
-            'expiry_date.after' => 'Expiry date must be in the future.',
+            'product_id.required' => 'Le produit est obligatoire.',
+            'product_id.exists' => 'Le produit sélectionné est introuvable.',
+            'quantity.required' => 'La quantité est obligatoire.',
+            'quantity.min' => 'Vous devez générer au moins un code.',
+            'quantity.max' => 'Vous ne pouvez pas générer plus de 1000 codes à la fois.',
+            'serial_prefix.regex' => 'Le préfixe ne doit contenir que des lettres, chiffres, tirets ou underscores.',
         ];
     }
 }

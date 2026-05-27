@@ -84,14 +84,23 @@ Route::prefix('v1/customer')
         ->name('wishlist.index');
     Route::post('/wishlist', [\Modules\Customer\Http\Controllers\WishlistController::class, 'add'])
         ->name('wishlist.add');
+    Route::delete('/wishlist', [\Modules\Customer\Http\Controllers\WishlistController::class, 'clear'])
+        ->name('wishlist.clear');
+    Route::get('/wishlist/{productId}/check', [\Modules\Customer\Http\Controllers\WishlistController::class, 'check'])
+        ->whereUuid('productId')
+        ->name('wishlist.check');
     Route::delete('/wishlist/{productId}', [\Modules\Customer\Http\Controllers\WishlistController::class, 'remove'])
+        ->whereUuid('productId')
         ->name('wishlist.remove');
     
     // Notifications
     Route::get('/notifications', [\Modules\Notification\Http\Controllers\NotificationController::class, 'index'])
         ->name('notifications.index');
-    Route::post('/notifications/{id}/read', [\Modules\Notification\Http\Controllers\NotificationController::class, 'markAsRead'])
-        ->name('notifications.read');
+    Route::get('/notifications/unread-count', [\Modules\Notification\Http\Controllers\NotificationController::class, 'unreadCount'])
+        ->name('notifications.unread-count');
     Route::post('/notifications/read-all', [\Modules\Notification\Http\Controllers\NotificationController::class, 'markAllAsRead'])
         ->name('notifications.read-all');
+    Route::post('/notifications/{id}/read', [\Modules\Notification\Http\Controllers\NotificationController::class, 'markAsRead'])
+        ->whereUuid('id')
+        ->name('notifications.read');
 });

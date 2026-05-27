@@ -5,44 +5,37 @@ declare(strict_types=1);
 namespace Modules\Order\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Modules\Order\Models\Order;
 
 class UpdateOrderStatusRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
-        return true;
+        return $this->user()?->can('orders.update') === true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     */
     public function rules(): array
     {
         return [
             'status' => [
                 'required',
                 'string',
-                'in:' . implode(',', [
-                    \Modules\Order\Models\Order::STATUS_PENDING,
-                    \Modules\Order\Models\Order::STATUS_PROCESSING,
-                    \Modules\Order\Models\Order::STATUS_CONFIRMED,
-                    \Modules\Order\Models\Order::STATUS_SHIPPED,
-                    \Modules\Order\Models\Order::STATUS_DELIVERED,
-                    \Modules\Order\Models\Order::STATUS_CANCELLED,
-                    \Modules\Order\Models\Order::STATUS_REFUNDED,
+                Rule::in([
+                    Order::STATUS_PENDING,
+                    Order::STATUS_PROCESSING,
+                    Order::STATUS_CONFIRMED,
+                    Order::STATUS_SHIPPED,
+                    Order::STATUS_DELIVERED,
+                    Order::STATUS_CANCELLED,
+                    Order::STATUS_REFUNDED,
                 ]),
             ],
-            'note' => 'nullable|string|max:500',
-            'notify_customer' => 'nullable|boolean',
+            'note' => ['nullable', 'string', 'max:500'],
+            'notify_customer' => ['nullable', 'boolean'],
         ];
     }
 
-    /**
-     * Get custom messages for validator errors.
-     */
     public function messages(): array
     {
         return [
@@ -52,9 +45,6 @@ class UpdateOrderStatusRequest extends FormRequest
         ];
     }
 
-    /**
-     * Get custom attribute names for validator errors.
-     */
     public function attributes(): array
     {
         return [

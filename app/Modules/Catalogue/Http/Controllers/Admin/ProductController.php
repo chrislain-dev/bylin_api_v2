@@ -19,6 +19,7 @@ use Modules\Catalogue\Http\Requests\StoreProductRequest;
 use Modules\Catalogue\Http\Requests\UpdateProductRequest;
 use Modules\Catalogue\Http\Requests\EnablePreorderRequest;
 use Modules\Catalogue\Http\Requests\BulkDestroyProductsRequest;
+use Modules\Catalogue\Http\Requests\BulkUpdateProductsRequest;
 
 class ProductController extends ApiController
 {
@@ -125,7 +126,6 @@ class ProductController extends ApiController
 
     public function updateStock(string $id, UpdateStockRequest $request): JsonResponse
     {
-        Log::alert($request);
         $result = $this->productService->updateStock(
             productId: $id,
             quantity: $request->input('quantity'),
@@ -228,13 +228,13 @@ class ProductController extends ApiController
         );
     }
 
-    public function bulkUpdate(Request $request): JsonResponse
+    public function bulkUpdate(BulkUpdateProductsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'product_ids' => 'required|array',
-            'product_ids.*' => 'exists:products,id',
-            'action' => 'required|in:activate,deactivate,delete,feature,unfeature',
-        ]);
+        $validated = $request->validated();
+
+        if ($validated['action'] === 'delete' && ! $request->user()?->can('catalogue.delete')) {
+            return $this->errorResponse('Vous n’êtes pas autorisé à supprimer des produits.', 403);
+        }
 
         $count = $this->productService->bulkUpdate(
             $validated['product_ids'],
@@ -243,7 +243,7 @@ class ProductController extends ApiController
 
         return $this->successResponse(
             ['updated_count' => $count],
-            "{$count} products updated successfully"
+            "{$count} produit(s) mis à jour avec succès"
         );
     }
 
@@ -278,12 +278,9 @@ class ProductController extends ApiController
     /**
      * Restauration en masse de produits
      */
-    public function bulkRestore(Request $request): JsonResponse
+    public function bulkRestore(BulkDestroyProductsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:products,id'
-        ]);
+        $validated = $request->validated();
 
         try {
             $count = Product::withTrashed()
@@ -310,12 +307,9 @@ class ProductController extends ApiController
     /**
      * Suppression définitive en masse
      */
-    public function bulkForceDelete(Request $request): JsonResponse
+    public function bulkForceDelete(BulkDestroyProductsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:products,id'
-        ]);
+        $validated = $request->validated();
 
         try {
             $count = Product::withTrashed()

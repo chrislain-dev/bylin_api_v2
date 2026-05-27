@@ -11,7 +11,7 @@ class UpdatePromotionRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return $this->user()?->can('promotions.update') === true;
     }
 
     public function rules(): array

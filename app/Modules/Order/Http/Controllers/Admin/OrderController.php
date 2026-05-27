@@ -111,4 +111,31 @@ class OrderController extends ApiController
 
         return $this->successResponse($order, 'Commande annulée avec succès');
     }
+
+    /**
+     * List order items.
+     */
+    public function items(string $id): JsonResponse
+    {
+        $order = Order::with(['items.product', 'items.variation'])->findOrFail($id);
+
+        return $this->successResponse($order->items);
+    }
+
+    /**
+     * Soft delete an order only when it is already cancelled or refunded.
+     */
+    public function destroy(string $id): JsonResponse
+    {
+        $order = Order::findOrFail($id);
+
+        if (! in_array($order->status, [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED], true)) {
+            return $this->errorResponse('Seules les commandes annulées ou remboursées peuvent être supprimées.', 422);
+        }
+
+        $order->delete();
+
+        return $this->successResponse(null, 'Commande supprimée avec succès');
+    }
+
 }

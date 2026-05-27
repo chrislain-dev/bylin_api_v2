@@ -7,7 +7,6 @@ namespace Modules\Inventory\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
-use Illuminate\Support\Facades\Log;
 use Modules\Catalogue\Models\Product;
 use Modules\Inventory\Enums\StockOperation;
 use Modules\Inventory\Enums\StockReason;
@@ -16,9 +15,7 @@ class AdjustStockRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // TODO: Ajoutez votre logique de permissions
-        // return $this->user()->can('manage_inventory');
-        return true;
+        return $this->user()?->can('inventory.manage') === true;
     }
 
     public function rules(): array
@@ -91,13 +88,6 @@ class AdjustStockRequest extends FormRequest
             if (!$product) {
                 return;
             }
-
-            Log::info('AdjustStockRequest validation', [
-                'product_id' => $product->id,
-                'has_variations' => $product->variations_count > 0,
-                'data' => $data
-            ]);
-
             // PRODUIT VARIABLE
             if ($product->variations_count > 0) {
                 if (empty($data['variations'])) {

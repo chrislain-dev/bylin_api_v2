@@ -109,6 +109,23 @@ class Customer extends Authenticatable
         return $this->hasMany(Address::class);
     }
 
+
+    /**
+     * Customer carts
+     */
+    public function carts()
+    {
+        return $this->hasMany(\Modules\Cart\Models\Cart::class);
+    }
+
+    /**
+     * Customer wishlist items
+     */
+    public function wishlistItems()
+    {
+        return $this->hasMany(Wishlist::class);
+    }
+
     /**
      * Get default shipping address
      */

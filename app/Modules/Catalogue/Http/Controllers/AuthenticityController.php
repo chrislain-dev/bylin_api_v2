@@ -7,6 +7,8 @@ namespace Modules\Catalogue\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Modules\Catalogue\Services\ProductAuthenticityService;
+use Modules\Catalogue\Http\Requests\GenerateAuthenticityCodesRequest;
+use Modules\Catalogue\Http\Requests\MarkAsFakeRequest;
 use Modules\Core\Http\Controllers\ApiController;
 
 /**
@@ -43,13 +45,9 @@ class AuthenticityController extends ApiController
     /**
      * Generate authenticity codes (admin only)
      */
-    public function generate(Request $request): JsonResponse
+    public function generate(GenerateAuthenticityCodesRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'product_id' => 'required|uuid|exists:products,id',
-            'quantity' => 'required|integer|min:1|max:1000',
-            'serial_prefix' => 'nullable|string|max:10',
-        ]);
+        $validated = $request->validated();
 
         $codes = $this->authenticityService->generateAuthenticityCode(
             $validated['product_id'],
@@ -86,11 +84,9 @@ class AuthenticityController extends ApiController
     /**
      * Mark code as fake (admin only)
      */
-    public function markAsFake(string $qrCode, Request $request): JsonResponse
+    public function markAsFake(string $qrCode, MarkAsFakeRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'reason' => 'required|string|max:500',
-        ]);
+        $validated = $request->validated();
 
         $this->authenticityService->markAsFake($qrCode, $validated['reason']);
 

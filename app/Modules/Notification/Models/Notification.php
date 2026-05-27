@@ -16,11 +16,18 @@ class Notification extends BaseModel
 
     protected $fillable = [
         'type',
+        'title',
+        'message',
         'notifiable_type',
         'notifiable_id',
         'channel',
         'status',
         'data',
+        'action_url',
+        'action_text',
+        'icon',
+        'priority',
+        'metadata',
         'sent_at',
         'read_at',
         'error_message',
@@ -28,6 +35,7 @@ class Notification extends BaseModel
 
     protected $casts = [
         'data' => 'array',
+        'metadata' => 'array',
         'sent_at' => 'datetime',
         'read_at' => 'datetime',
     ];

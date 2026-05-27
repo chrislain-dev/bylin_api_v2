@@ -11,6 +11,7 @@ use Modules\Catalogue\Models\Product;
 use Modules\Core\Http\Controllers\ApiController;
 use Modules\Inventory\Services\InventoryService;
 use Modules\Inventory\Http\Requests\AdjustStockRequest;
+use Modules\Inventory\Http\Requests\BulkAdjustStockRequest;
 
 class InventoryController extends ApiController
 {
@@ -114,6 +115,42 @@ class InventoryController extends ApiController
         }
     }
 
+
+
+    /**
+     * Ajuster plusieurs stocks en une seule opération atomique.
+     */
+    public function bulkAdjust(BulkAdjustStockRequest $request): JsonResponse
+    {
+        try {
+            $movements = $this->inventoryService->bulkAdjustStock($request->validated('adjustments'));
+
+            return $this->successResponse([
+                'count' => count($movements),
+                'movements' => $movements,
+            ], 'Stocks mis à jour avec succès.');
+        } catch (\DomainException | \InvalidArgumentException $e) {
+            Log::warning('Bulk stock adjustment business error', [
+                'message' => $e->getMessage(),
+                'data' => $request->validated(),
+            ]);
+
+            return $this->errorResponse($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            Log::error('Bulk stock adjustment system error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'data' => $request->validated(),
+            ]);
+
+            report($e);
+
+            return $this->errorResponse(
+                'Une erreur interne est survenue lors de la mise à jour des stocks.',
+                500
+            );
+        }
+    }
     /**
      * Récupérer les produits en stock faible
      */

@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace Modules\Notification\Services;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Queue;
+use Modules\Notification\Jobs\SendEmailNotification;
 use Modules\Notification\Models\Notification;
 
 class NotificationService
 {
     /**
-     * Send notification to user
+     * Create and dispatch a notification for a notifiable model.
      */
     public function notify(
         Model $user,
@@ -22,64 +22,60 @@ class NotificationService
         array $channels = ['database'],
         string $priority = 'normal'
     ): Notification {
+        $channels = array_values(array_unique($channels));
+
         $notification = Notification::create([
             'notifiable_id' => $user->id,
-            'notifiable_type' => get_class($user),
+            'notifiable_type' => $user::class,
             'type' => $type,
             'title' => $title,
             'message' => $message,
             'channel' => implode(',', $channels),
             'priority' => $priority,
-            'data' => array_merge($data, [
-                'channels' => $channels,
-            ]),
+            'data' => $data,
+            'action_url' => $data['action_url'] ?? null,
+            'action_text' => $data['action_text'] ?? null,
+            'icon' => $data['icon'] ?? null,
+            'metadata' => ['channels' => $channels],
             'status' => Notification::STATUS_PENDING,
         ]);
 
-        // Queue notifications for processing
-        if (in_array('email', $channels)) {
-            Queue::push(new \Modules\Notification\Jobs\SendEmailNotification($notification));
+        if (in_array('database', $channels, true)) {
+            $notification->markAsSent();
         }
 
-        if (in_array('database', $channels)) {
-            // Database notification is already created, just mark as sent
-            $notification->markAsSent();
+        if (in_array('email', $channels, true)) {
+            SendEmailNotification::dispatch($notification);
         }
 
         return $notification;
     }
 
-    /**
-     * Send order confirmation notification
-     */
     public function orderConfirmation(Model $customer, $order): void
     {
         $this->notify(
             $customer,
             Notification::TYPE_ORDER_CONFIRMATION,
-            'Order Confirmed',
-            "Your order #{$order->id} has been confirmed and is being processed.",
+            'Commande confirmée',
+            "Votre commande #{$order->order_number} a été confirmée et est en cours de traitement.",
             [
                 'order_id' => $order->id,
                 'order_total' => $order->total,
                 'action_url' => route('api.customer.orders.show', $order->id),
-                'action_text' => 'View Order',
+                'action_text' => 'Voir la commande',
             ],
             ['database', 'email'],
             'high'
         );
     }
 
-    /**
-     * Send payment success notification
-     */
-    public function paymentSuccess(Model $customer, $order, $amount): void
+    public function paymentSuccess(Model $customer, $order, int|float $amount): void
     {
         $this->notify(
             $customer,
             Notification::TYPE_PAYMENT_SUCCESS,
-            'Payment Successful',
-            "Your payment of {$amount} has been processed successfully.",
+            'Paiement réussi',
+            "Votre paiement de {$amount} a été traité avec succès.",
             [
                 'order_id' => $order->id,
                 'amount' => $amount,
@@ -89,62 +85,58 @@ class NotificationService
         );
     }
 
-    /**
-     * Send payment failed notification
-     */
     public function paymentFailed(Model $customer, $order, string $reason): void
     {
         $this->notify(
             $customer,
             Notification::TYPE_PAYMENT_FAILED,
-            'Payment Failed',
-            "Your payment could not be processed. Reason: {$reason}",
+            'Paiement échoué',
+            "Votre paiement n'a pas pu être traité. Raison : {$reason}",
             [
                 'order_id' => $order->id,
                 'reason' => $reason,
                 'action_url' => route('api.customer.orders.show', $order->id),
-                'action_text' => 'Retry Payment',
+                'action_text' => 'Réessayer le paiement',
             ],
             ['database', 'email'],
             'urgent'
         );
     }
 
-    /**
-     * Send order shipped notification
-     */
-    public function orderShipped(Model $customer, $order, string $trackingNumber = null): void
+    public function orderShipped(Model $customer, $order, ?string $trackingNumber = null): void
     {
-        $message = "Your order #{$order->id} has been shipped";
+        $message = "Votre commande #{$order->order_number} a été expédiée.";
+
         if ($trackingNumber) {
-            $message .= " with tracking number: {$trackingNumber}";
+            $message .= " Numéro de suivi : {$trackingNumber}.";
         }
 
         $this->notify(
             $customer,
             Notification::TYPE_ORDER_SHIPPED,
-            'Order Shipped',
+            'Commande expédiée',
             $message,
             [
                 'order_id' => $order->id,
                 'tracking_number' => $trackingNumber,
                 'action_url' => route('api.customer.orders.show', $order->id),
-                'action_text' => 'Track Order',
+                'action_text' => 'Suivre la commande',
             ],
             ['database', 'email']
         );
     }
 
-    /**
-     * Send new device alert
-     */
     public function newDeviceAlert(Model $user, array $deviceInfo, array $location): void
     {
+        $deviceName = $deviceInfo['device_name'] ?? 'appareil inconnu';
+        $city = $location['city'] ?? 'localisation inconnue';
+        $country = $location['country'] ?? '';
+
         $this->notify(
             $user,
             'new_device_login',
-            'New Device Login Detected',
-            "A new login from {$deviceInfo['device_name']} in {$location['city']}, {$location['country']} was detected.",
+            'Nouvelle connexion détectée',
+            "Une nouvelle connexion depuis {$deviceName} à {$city} {$country} a été détectée.",
             [
                 'device' => $deviceInfo,
                 'location' => $location,
@@ -155,45 +147,30 @@ class NotificationService
         );
     }
 
-    /**
-     * Mark notification as read
-     */
     public function markAsRead(string $notificationId): void
     {
-        $notification = Notification::find($notificationId);
-        if ($notification) {
-            $notification->markAsRead();
-        }
+        Notification::query()->find($notificationId)?->markAsRead();
     }
 
-    /**
-     * Mark all notifications as read for user
-     */
     public function markAllAsRead(Model $user): int
     {
-        return Notification::forNotifiable(get_class($user), $user->id)
+        return Notification::forNotifiable($user::class, (string) $user->id)
             ->unread()
             ->update(['read_at' => now()]);
     }
 
-    /**
-     * Get unread count for user
-     */
     public function getUnreadCount(Model $user): int
     {
-        return Notification::forNotifiable(get_class($user), $user->id)
+        return Notification::forNotifiable($user::class, (string) $user->id)
             ->unread()
             ->count();
     }
 
-    /**
-     * Get recent notifications for user
-     */
     public function getRecent(Model $user, int $limit = 10)
     {
-        return Notification::forNotifiable(get_class($user), $user->id)
+        return Notification::forNotifiable($user::class, (string) $user->id)
             ->latest()
-            ->limit($limit)
+            ->limit(min($limit, 50))
             ->get();
     }
 }

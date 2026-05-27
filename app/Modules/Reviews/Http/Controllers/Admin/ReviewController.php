@@ -6,6 +6,8 @@ namespace Modules\Reviews\Http\Controllers\Admin;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Modules\Reviews\Http\Requests\BulkReviewIdsRequest;
+use Modules\Reviews\Http\Requests\RejectReviewRequest;
 use Illuminate\Support\Facades\Log;
 use Modules\Core\Http\Controllers\ApiController;
 use Modules\Reviews\Models\Review;
@@ -110,7 +112,7 @@ class ReviewController extends ApiController
     /**
      * Reject a review
      */
-    public function reject(string $id, Request $request): JsonResponse
+    public function reject(string $id, RejectReviewRequest $request): JsonResponse
     {
         try {
             $review = Review::findOrFail($id);
@@ -119,7 +121,7 @@ class ReviewController extends ApiController
                 return $this->errorResponse('Cet avis est déjà rejeté', 422);
             }
 
-            $reason = $request->input('reason');
+            $reason = $request->validated('reason');
             $rejectedReview = $this->reviewService->rejectReview($review, $reason);
 
             return $this->successResponse(
@@ -193,15 +195,10 @@ class ReviewController extends ApiController
     /**
      * Bulk approve reviews
      */
-    public function bulkApprove(Request $request): JsonResponse
+    public function bulkApprove(BulkReviewIdsRequest $request): JsonResponse
     {
         try {
-            $request->validate([
-                'ids' => 'required|array',
-                'ids.*' => 'exists:reviews,id'
-            ]);
-
-            $count = $this->reviewService->bulkApprove($request->ids);
+            $count = $this->reviewService->bulkApprove($request->validated('ids'));
 
             return $this->successResponse(
                 null,
@@ -222,15 +219,10 @@ class ReviewController extends ApiController
     /**
      * Bulk reject reviews
      */
-    public function bulkReject(Request $request): JsonResponse
+    public function bulkReject(BulkReviewIdsRequest $request): JsonResponse
     {
         try {
-            $request->validate([
-                'ids' => 'required|array',
-                'ids.*' => 'exists:reviews,id'
-            ]);
-
-            $count = $this->reviewService->bulkReject($request->ids);
+            $count = $this->reviewService->bulkReject($request->validated('ids'));
 
             return $this->successResponse(
                 null,
@@ -251,15 +243,10 @@ class ReviewController extends ApiController
     /**
      * Bulk delete reviews
      */
-    public function bulkDestroy(Request $request): JsonResponse
+    public function bulkDestroy(BulkReviewIdsRequest $request): JsonResponse
     {
         try {
-            $request->validate([
-                'ids' => 'required|array',
-                'ids.*' => 'exists:reviews,id'
-            ]);
-
-            $count = $this->reviewService->bulkDelete($request->ids);
+            $count = $this->reviewService->bulkDelete($request->validated('ids'));
 
             return $this->successResponse(
                 null,

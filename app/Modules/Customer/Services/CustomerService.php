@@ -78,8 +78,8 @@ class CustomerService extends BaseService
     {
         return $this->transaction(function () use ($customerId, $data) {
             $this->validateRequired($data, [
-                'first_name', 'last_name', 'phone', 
-                'address_line_1', 'city', 'postal_code', 'country'
+                'first_name', 'last_name', 'phone',
+                'address_line_1', 'city', 'country'
             ]);
 
             $data['customer_id'] = $customerId;
@@ -108,10 +108,12 @@ class CustomerService extends BaseService
         return $this->transaction(function () use ($addressId, $data) {
             $address = Address::findOrFail($addressId);
 
-            // If setting as default, unset others
+            $targetType = $data['type'] ?? $address->type;
+
+            // If setting as default, unset others for the target type.
             if (isset($data['is_default']) && $data['is_default']) {
                 Address::where('customer_id', $address->customer_id)
-                    ->where('type', $address->type)
+                    ->where('type', $targetType)
                     ->where('id', '!=', $addressId)
                     ->update(['is_default' => false]);
             }

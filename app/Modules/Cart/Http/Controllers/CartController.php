@@ -6,108 +6,79 @@ namespace Modules\Cart\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+use Modules\Cart\Http\Requests\AddToCartRequest;
+use Modules\Cart\Http\Requests\ApplyCouponRequest;
+use Modules\Cart\Http\Requests\UpdateCartItemRequest;
 use Modules\Cart\Services\CartService;
 use Modules\Core\Http\Controllers\ApiController;
+use Throwable;
 
-/**
- * Cart Controller
- * 
- * Handles shopping cart operations
- */
 class CartController extends ApiController
 {
-    protected CartService $cartService;
+    public function __construct(
+        protected CartService $cartService
+    ) {}
 
-    public function __construct(CartService $cartService)
-    {
-        $this->cartService = $cartService;
-    }
-
-    /**
-     * Get current user's or session's cart
-     */
     public function show(Request $request): JsonResponse
     {
-        $customerId = $request->user()?->id;
-        $sessionId = $request->header('X-Session-ID'); // Or from cookie
-
-        if (!$customerId && !$sessionId) {
-            // Generate a session ID if none provided for guest
-            $sessionId = (string) \Illuminate\Support\Str::uuid();
-        }
+        [$customerId, $sessionId, $generatedSession] = $this->resolveCartOwner($request);
 
         $cart = $this->cartService->getCart($customerId, $sessionId);
 
-        // Return session ID in header if it was generated
         $response = $this->successResponse($cart);
-        if (!$customerId && $sessionId) {
+
+        if ($generatedSession) {
             $response->headers->set('X-Session-ID', $sessionId);
         }
 
         return $response;
     }
 
-    /**
-     * Add item to cart
-     */
-    public function addItem(\Modules\Cart\Http\Requests\AddToCartRequest $request): JsonResponse
+    public function addItem(AddToCartRequest $request): JsonResponse
     {
-        $validated = $request->validated();
-
-        $customerId = $request->user()?->id;
-        $sessionId = $request->header('X-Session-ID');
-
+        [$customerId, $sessionId, $generatedSession] = $this->resolveCartOwner($request);
         $cart = $this->cartService->getCart($customerId, $sessionId);
 
         try {
-            $cart = $this->cartService->addItem($cart, $validated);
-        } catch (\Exception $e) {
-            return $this->errorResponse($e->getMessage(), 422);
+            $cart = $this->cartService->addItem($cart, $request->validated());
+        } catch (Throwable $e) {
+            return $this->errorResponse($e->getMessage(), method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 422);
         }
 
-        return $this->successResponse($cart, 'Item added to cart');
+        $response = $this->successResponse($cart, 'Item added to cart');
+
+        if ($generatedSession) {
+            $response->headers->set('X-Session-ID', $sessionId);
+        }
+
+        return $response;
     }
 
-    /**
-     * Update cart item quantity
-     */
-    public function updateItem(string $itemId, Request $request): JsonResponse
+    public function updateItem(string $itemId, UpdateCartItemRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'quantity' => 'required|integer|min:0',
-        ]);
-
-        $customerId = $request->user()?->id;
-        $sessionId = $request->header('X-Session-ID');
-
+        [$customerId, $sessionId] = $this->resolveCartOwner($request);
         $cart = $this->cartService->getCart($customerId, $sessionId);
 
-        // Verify item belongs to cart
-        if (!$cart->items()->where('id', $itemId)->exists()) {
+        if (! $cart->items()->where('id', $itemId)->exists()) {
             return $this->errorResponse('Item not found in cart', 404);
         }
 
         try {
-            $cart = $this->cartService->updateItem($cart, $itemId, $validated['quantity']);
-        } catch (\Exception $e) {
-            return $this->errorResponse($e->getMessage(), 422);
+            $cart = $this->cartService->updateItem($cart, $itemId, (int) $request->validated('quantity'));
+        } catch (Throwable $e) {
+            return $this->errorResponse($e->getMessage(), method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 422);
         }
 
         return $this->successResponse($cart, 'Cart updated');
     }
 
-    /**
-     * Remove item from cart
-     */
     public function removeItem(string $itemId, Request $request): JsonResponse
     {
-        $customerId = $request->user()?->id;
-        $sessionId = $request->header('X-Session-ID');
-
+        [$customerId, $sessionId] = $this->resolveCartOwner($request);
         $cart = $this->cartService->getCart($customerId, $sessionId);
 
-        // Verify item belongs to cart
-        if (!$cart->items()->where('id', $itemId)->exists()) {
+        if (! $cart->items()->where('id', $itemId)->exists()) {
             return $this->errorResponse('Item not found in cart', 404);
         }
 
@@ -116,63 +87,50 @@ class CartController extends ApiController
         return $this->successResponse($cart, 'Item removed from cart');
     }
 
-    /**
-     * Clear cart
-     */
     public function clear(Request $request): JsonResponse
     {
-        $customerId = $request->user()?->id;
-        $sessionId = $request->header('X-Session-ID');
-
+        [$customerId, $sessionId] = $this->resolveCartOwner($request);
         $cart = $this->cartService->getCart($customerId, $sessionId);
-        
+
         $this->cartService->clearCart($cart);
 
         return $this->successResponse(null, 'Cart cleared');
     }
 
-    /**
-     * Apply coupon
-     */
-    public function applyCoupon(Request $request): JsonResponse
+    public function applyCoupon(ApplyCouponRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'coupon_code' => 'required|string',
-        ]);
-
-        $customerId = $request->user()?->id;
-        $sessionId = $request->header('X-Session-ID');
-
+        [$customerId, $sessionId] = $this->resolveCartOwner($request);
         $cart = $this->cartService->getCart($customerId, $sessionId);
 
         try {
-            $cart = $this->cartService->applyCoupon($cart, $validated['coupon_code']);
-        } catch (\Exception $e) {
-            return $this->errorResponse($e->getMessage(), 422);
+            $cart = $this->cartService->applyCoupon($cart, $request->validated('coupon_code'));
+        } catch (Throwable $e) {
+            return $this->errorResponse($e->getMessage(), method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 422);
         }
 
         return $this->successResponse($cart, 'Coupon applied');
     }
 
-    /**
-     * Remove coupon
-     */
     public function removeCoupon(Request $request): JsonResponse
+    {
+        [$customerId, $sessionId] = $this->resolveCartOwner($request);
+        $cart = $this->cartService->getCart($customerId, $sessionId);
+        $cart = $this->cartService->removeCoupon($cart);
+
+        return $this->successResponse($cart, 'Coupon removed');
+    }
+
+    private function resolveCartOwner(Request $request): array
     {
         $customerId = $request->user()?->id;
         $sessionId = $request->header('X-Session-ID');
+        $generatedSession = false;
 
-        $cart = $this->cartService->getCart($customerId, $sessionId);
+        if (! $customerId && ! $sessionId) {
+            $sessionId = (string) Str::uuid();
+            $generatedSession = true;
+        }
 
-        // First recalculate the cart to get correct totals
-        $this->cartService->recalculateCart($cart);
-        
-        // Then update coupon fields
-        $cart->update([
-            'coupon_code' => null,
-            'discount_amount' => 0,
-        ]);
-
-        return $this->successResponse($cart, 'Coupon removed');
+        return [$customerId, $sessionId, $generatedSession];
     }
 }

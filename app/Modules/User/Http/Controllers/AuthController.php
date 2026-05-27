@@ -5,11 +5,9 @@ declare(strict_types=1);
 namespace Modules\User\Http\Controllers;
 
 use Exception;
-use Throwable;
 use Illuminate\Http\Request;
 use Modules\User\Models\User;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -40,11 +38,19 @@ class AuthController extends ApiController
                 'password' => 'required|string',
             ]);
 
-            $user = User::where('email', $validated['email'])->first();
+            if ($this->loginHistoryService->isLockedOut($request->ip())) {
+                return $this->errorResponse(
+                    'Trop de tentatives de connexion échouées. Veuillez réessayer plus tard.',
+                    429
+                );
+            }
+
+            $email = mb_strtolower($validated['email']);
+            $user = User::where('email', $email)->first();
 
             // Vérification des identifiants
             if (!$user || !Hash::check($validated['password'], $user->password)) {
-                $this->loginHistoryService->recordFailedLogin($request->ip(), $validated['email']);
+                $this->loginHistoryService->recordFailedLogin($request->ip(), $email);
 
                 throw ValidationException::withMessages([
                     'email' => ['Les identifiants fournis sont incorrects.'],
@@ -53,7 +59,7 @@ class AuthController extends ApiController
 
             // Vérification du statut du compte
             if ($user->status !== 'active') {
-                $this->loginHistoryService->recordFailedLogin($request->ip(), $validated['email'], 'Compte inactif');
+                $this->loginHistoryService->recordFailedLogin($request->ip(), $email, 'Compte inactif');
 
                 return $this->errorResponse(
                     'Votre compte n\'est pas actif. Veuillez contacter l\'administrateur.',
@@ -63,7 +69,7 @@ class AuthController extends ApiController
 
             // Vérification si le compte est verrouillé (optionnel)
             if (method_exists($user, 'isLocked') && $user->isLocked()) {
-                $this->loginHistoryService->recordFailedLogin($request->ip(), $validated['email'], 'Compte verrouillé');
+                $this->loginHistoryService->recordFailedLogin($request->ip(), $email, 'Compte verrouillé');
 
                 return $this->errorResponse(
                     'Votre compte a été temporairement verrouillé en raison de tentatives de connexion échouées.',
@@ -78,7 +84,9 @@ class AuthController extends ApiController
             $request->session()->regenerate();
 
             // Enregistrement de la connexion réussie
-            $this->loginHistoryService->recordSuccessfulLogin($user, $request->ip());
+            $user->forceFill(['last_login_at' => now()])->save();
+
+            $this->loginHistoryService->recordSuccessfulLogin($user, $request->ip(), $request->userAgent());
 
             // Réponse sans wrapper successResponse
             return response()->json(
@@ -88,10 +96,9 @@ class AuthController extends ApiController
             // Les erreurs de validation sont déjà gérées
             throw $e;
         } catch (Exception $e) {
-            Log::error('Erreur lors de la connexion', [
-                'email' => $validated['email'] ?? 'unknown',
+            Log::error('Erreur lors de la connexion admin', [
+                'email_hash' => isset($validated['email']) ? hash('sha256', mb_strtolower($validated['email'])) : null,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ]);
 
             return $this->errorResponse(
@@ -114,23 +121,13 @@ class AuthController extends ApiController
                 'email.email' => 'L\'adresse e-mail doit être valide.',
             ]);
 
-            Log::info('Tentative d\'envoi de lien de réinitialisation', [
-                'email' => $validated['email']
-            ]);
+            $credentials = ['email' => mb_strtolower($validated['email'])];
+            $status = Password::sendResetLink($credentials);
 
-            // Envoie du lien de réinitialisation
-            $status = Password::sendResetLink($validated);
-
-            Log::info('Demande de réinitialisation de mot de passe', [
-                'email' => $validated['email'],
+            Log::info('Demande de réinitialisation de mot de passe admin', [
+                'email_hash' => hash('sha256', $credentials['email']),
                 'ip' => $request->ip(),
-                'status' => $status
-            ]);
-
-            Log::info('Statut de l\'envoi', [
                 'status' => $status,
-                'is_sent' => $status === Password::RESET_LINK_SENT,
-                'is_invalid_user' => $status === Password::INVALID_USER,
             ]);
 
             return $this->successResponse(
@@ -141,9 +138,8 @@ class AuthController extends ApiController
             throw $e;
         } catch (Exception $e) {
             Log::error('Erreur lors de l\'envoi du lien de réinitialisation', [
-                'email' => $validated['email'] ?? 'unknown',
+                'email_hash' => isset($validated['email']) ? hash('sha256', mb_strtolower($validated['email'])) : null,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ]);
 
             return $this->errorResponse(
@@ -183,10 +179,9 @@ class AuthController extends ApiController
                     // Révoquer toutes les sessions existantes
                     $user->tokens()->delete();
 
-                    Log::info('Mot de passe réinitialisé avec succès', [
+                    Log::info('Mot de passe admin réinitialisé avec succès', [
                         'user_id' => $user->id,
-                        'email' => $user->email,
-                        'ip' => $request->ip()
+                        'ip' => $request->ip(),
                     ]);
                 }
             );
@@ -214,9 +209,8 @@ class AuthController extends ApiController
             throw $e;
         } catch (Exception $e) {
             Log::error('Erreur lors de la réinitialisation du mot de passe', [
-                'email' => $validated['email'] ?? 'unknown',
+                'email_hash' => isset($validated['email']) ? hash('sha256', mb_strtolower($validated['email'])) : null,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ]);
 
             return $this->errorResponse(
@@ -243,10 +237,11 @@ class AuthController extends ApiController
 
             // Log optionnel de la déconnexion
             if ($user) {
-                Log::info('Déconnexion réussie', [
+                $this->loginHistoryService->recordLogout($user);
+
+                Log::info('Déconnexion admin réussie', [
                     'user_id' => $user->id,
-                    'email' => $user->email,
-                    'ip' => $request->ip()
+                    'ip' => $request->ip(),
                 ]);
             }
 
@@ -254,7 +249,6 @@ class AuthController extends ApiController
         } catch (Exception $e) {
             Log::error('Erreur lors de la déconnexion', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ]);
 
             return $this->errorResponse(
@@ -328,7 +322,6 @@ class AuthController extends ApiController
             Log::error('Erreur lors du rafraîchissement des données utilisateur', [
                 'user_id' => $request->user()?->id,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ]);
 
             return $this->errorResponse(

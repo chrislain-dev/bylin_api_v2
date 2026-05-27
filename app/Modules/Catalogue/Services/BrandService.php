@@ -69,6 +69,27 @@ class BrandService extends BaseService
         });
     }
 
+
+    public function forceDeleteBrand(string $id): bool
+    {
+        return $this->transaction(function () use ($id) {
+            $brand = Brand::withTrashed()->withCount('products')->findOrFail($id);
+
+            if ($brand->products_count > 0) {
+                throw new \InvalidArgumentException(
+                    'Impossible de supprimer définitivement une marque liée à des produits.'
+                );
+            }
+
+            $brand->clearMediaCollection('logo');
+            $brand->forceDelete();
+
+            $this->logInfo('Marque supprimée définitivement', ['brand_id' => $id]);
+
+            return true;
+        });
+    }
+
     private function generateUniqueSlug(string $name, ?string $ignoreId = null): string
     {
         $slug = Str::slug($name);

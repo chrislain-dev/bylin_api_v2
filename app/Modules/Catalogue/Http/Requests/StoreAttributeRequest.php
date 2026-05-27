@@ -20,7 +20,7 @@ class StoreAttributeRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return true; // Gérer l'autorisation via les policies si nécessaire
+        return $this->user()?->can('catalogue.create') === true;
     }
 
     /**

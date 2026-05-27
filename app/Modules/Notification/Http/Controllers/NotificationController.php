@@ -11,93 +11,64 @@ use Modules\Notification\Models\Notification;
 
 class NotificationController extends ApiController
 {
-    /**
-     * Get notifications for authenticated user
-     */
     public function index(Request $request): JsonResponse
     {
-        $user = auth()->user();
-        
-        // Determine notifiable type based on guard
-        $notifiableType = $user instanceof \Modules\Customer\Models\Customer 
-            ? 'Modules\\Customer\\Models\\Customer'
-            : 'Modules\\User\\Models\\User';
+        $user = $request->user();
+        $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
 
-        $query = Notification::forNotifiable($notifiableType, $user->id)
+        $query = Notification::forNotifiable($user::class, (string) $user->id)
             ->latest();
 
-        // Filter by read/unread
-        if ($request->has('unread_only')) {
+        if ($request->boolean('unread_only')) {
             $query->unread();
         }
 
-        // Filter by channel
-        if ($request->has('channel')) {
-            $query->channel($request->channel);
+        if ($request->filled('channel')) {
+            $query->where('channel', 'like', '%' . $request->string('channel')->toString() . '%');
         }
 
-        // Filter by type
-        if ($request->has('type')) {
-            $query->type($request->type);
+        if ($request->filled('type')) {
+            $query->type($request->string('type')->toString());
         }
 
-        $notifications = $query->paginate($request->per_page ?? 15);
+        if ($request->filled('priority')) {
+            $query->where('priority', $request->string('priority')->toString());
+        }
 
-        return $this->successResponse($notifications);
+        return $this->successResponse($query->paginate($perPage));
     }
 
-    /**
-     * Mark a notification as read
-     */
-    public function markAsRead(string $id): JsonResponse
+    public function markAsRead(Request $request, string $id): JsonResponse
     {
-        $user = auth()->user();
-        
-        $notifiableType = $user instanceof \Modules\Customer\Models\Customer 
-            ? 'Modules\\Customer\\Models\\Customer'
-            : 'Modules\\User\\Models\\User';
+        $user = $request->user();
 
-        $notification = Notification::forNotifiable($notifiableType, $user->id)
+        $notification = Notification::forNotifiable($user::class, (string) $user->id)
             ->findOrFail($id);
 
         $notification->markAsRead();
 
-        return $this->successResponse($notification, 'Notification marked as read');
+        return $this->successResponse($notification, 'Notification marquée comme lue.');
     }
 
-    /**
-     * Mark all notifications as read
-     */
-    public function markAllAsRead(): JsonResponse
+    public function markAllAsRead(Request $request): JsonResponse
     {
-        $user = auth()->user();
-        
-        $notifiableType = $user instanceof \Modules\Customer\Models\Customer 
-            ? 'Modules\\Customer\\Models\\Customer'
-            : 'Modules\\User\\Models\\User';
+        $user = $request->user();
 
-        $count = Notification::forNotifiable($notifiableType, $user->id)
+        $count = Notification::forNotifiable($user::class, (string) $user->id)
             ->unread()
             ->update(['read_at' => now()]);
 
         return $this->successResponse(
             ['count' => $count],
-            "{$count} notification(s) marked as read"
+            "{$count} notification(s) marquée(s) comme lue(s)."
         );
     }
 
-    /**
-     * Get unread count
-     */
-    public function unreadCount(): JsonResponse
+    public function unreadCount(Request $request): JsonResponse
     {
-        $user = auth()->user();
-        
-        $notifiableType = $user instanceof \Modules\Customer\Models\Customer 
-            ? 'Modules\\Customer\\Models\\Customer'
-            : 'Modules\\User\\Models\\User';
+        $user = $request->user();
 
-        $count = Notification::forNotifiable($notifiableType, $user->id)
+        $count = Notification::forNotifiable($user::class, (string) $user->id)
             ->unread()
             ->count();
 

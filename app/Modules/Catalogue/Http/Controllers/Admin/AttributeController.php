@@ -11,6 +11,8 @@ use Modules\Catalogue\Services\AttributeService;
 use Modules\Core\Http\Controllers\ApiController;
 use Modules\Catalogue\Http\Requests\StoreAttributeRequest;
 use Modules\Catalogue\Http\Requests\UpdateAttributeRequest;
+use Modules\Catalogue\Http\Requests\BulkAttributeIdsRequest;
+use Modules\Catalogue\Http\Requests\ReorderAttributesRequest;
 
 /**
  * Contrôleur de gestion des attributs produits
@@ -188,12 +190,9 @@ class AttributeController extends ApiController
      * @param Request $request Requête contenant les IDs
      * @return JsonResponse Message de confirmation
      */
-    public function bulkDestroy(Request $request): JsonResponse
+    public function bulkDestroy(BulkAttributeIdsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:attributes,id'
-        ]);
+        $validated = $request->validated();
 
         Attribute::whereIn('id', $validated['ids'])->delete();
 
@@ -209,12 +208,9 @@ class AttributeController extends ApiController
      * @param Request $request Requête contenant les IDs
      * @return JsonResponse Message de confirmation
      */
-    public function bulkRestore(Request $request): JsonResponse
+    public function bulkRestore(BulkAttributeIdsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'ids' => 'required|array|min:1',
-            'ids.*' => 'required|string|exists:attributes,id'
-        ]);
+        $validated = $request->validated();
 
         $count = Attribute::onlyTrashed()
             ->whereIn('id', $validated['ids'])
@@ -224,6 +220,36 @@ class AttributeController extends ApiController
             null,
             $count . ' attribut(s) restauré(s) avec succès'
         );
+    }
+
+    public function bulkForceDelete(BulkAttributeIdsRequest $request): JsonResponse
+    {
+        $validated = $request->validated();
+        $deleted = 0;
+        $errors = [];
+
+        $attributes = Attribute::withTrashed()
+            ->whereIn('id', $validated['ids'])
+            ->withCount('products')
+            ->get();
+
+        foreach ($attributes as $attribute) {
+            if ($attribute->products_count > 0) {
+                $errors[] = [
+                    'id' => $attribute->id,
+                    'error' => 'Attribut utilisé par des produits',
+                ];
+                continue;
+            }
+
+            $attribute->forceDelete();
+            $deleted++;
+        }
+
+        return $this->successResponse([
+            'deleted' => $deleted,
+            'errors' => $errors,
+        ], $deleted . ' attribut(s) supprimé(s) définitivement');
     }
 
     /**
@@ -259,13 +285,9 @@ class AttributeController extends ApiController
      * @param Request $request Requête contenant l'ordre des attributs
      * @return JsonResponse Message de confirmation
      */
-    public function reorder(Request $request): JsonResponse
+    public function reorder(ReorderAttributesRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'orders' => 'required|array',
-            'orders.*.id' => 'required|string|exists:attributes,id',
-            'orders.*.sort_order' => 'required|integer|min:0'
-        ]);
+        $validated = $request->validated();
 
         foreach ($validated['orders'] as $order) {
             Attribute::where('id', $order['id'])
