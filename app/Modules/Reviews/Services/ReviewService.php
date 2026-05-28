@@ -340,10 +340,7 @@ class ReviewService extends BaseService
 
             foreach ($reviews as $review) {
                 $review->restore();
-
-                if ($review->status === Review::STATUS_APPROVED) {
-                    $productIds[] = $review->product_id;
-                }
+                $productIds[] = $review->product_id;
             }
 
             foreach (array_unique($productIds) as $productId) {
@@ -354,14 +351,14 @@ class ReviewService extends BaseService
 
             Log::info('Bulk restore reviews', [
                 'count' => $reviews->count(),
-                'review_ids' => $reviewIds
+                'review_ids' => $reviewIds,
             ]);
 
             return $reviews->count();
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Error bulk restoring reviews', [
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
             throw $e;
         }

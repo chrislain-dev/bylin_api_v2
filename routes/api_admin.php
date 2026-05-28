@@ -351,6 +351,8 @@ Route::prefix('v1/admin')
         Route::prefix('inventory')->name('inventory.')->middleware('permission:inventory.manage')->group(function () {
 
             // Stock queries
+            Route::get('notification-settings', [\Modules\Inventory\Http\Controllers\Admin\InventoryNotificationSettingsController::class, 'show'])->name('notification-settings.show');
+            Route::put('notification-settings', [\Modules\Inventory\Http\Controllers\Admin\InventoryNotificationSettingsController::class, 'update'])->name('notification-settings.update');
             Route::get('low-stock', [\Modules\Inventory\Http\Controllers\Admin\InventoryController::class, 'lowStock'])->name('low-stock');
             Route::get('movements', [\Modules\Inventory\Http\Controllers\Admin\InventoryController::class, 'movements'])->name('movements');
             Route::get('statistics', [\Modules\Inventory\Http\Controllers\Admin\InventoryController::class, 'statistics'])->name('statistics');
