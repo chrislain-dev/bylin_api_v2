@@ -226,9 +226,9 @@ class MemberService extends BaseService
         $inactive = User::where('status', 'inactive')->count();
         $suspended = User::where('status', 'suspended')->count();
 
-        $admins = User::role('admin')->count();
-        $superAdmins = User::role('super_admin')->count();
-        $managers = User::role('manager')->count();
+        $admins = $this->countUsersWithRole('admin');
+        $superAdmins = $this->countUsersWithRole('super_admin');
+        $managers = $this->countUsersWithRole('manager');
 
         $loggedInToday = User::whereDate('last_login_at', today())->count();
         $loggedInThisWeek = User::whereBetween('last_login_at', [now()->startOfWeek(), now()->endOfWeek()])->count();
