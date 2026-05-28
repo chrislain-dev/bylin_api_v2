@@ -6,6 +6,7 @@ use Modules\Catalogue\Models\Brand;
 use Modules\Catalogue\Models\Product;
 use Modules\Catalogue\Models\Category;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Gate;
 use Modules\Catalogue\Models\ProductVariation;
 use Modules\Catalogue\Observers\BrandObserver;
 use Modules\Catalogue\Observers\ProductObserver;
@@ -27,6 +28,13 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Super admin bypass for all Laravel/Spatie permission checks.
+        // This prevents the dashboard from returning 403 when the role exists
+        // but the permission cache or seed state is temporarily out of sync.
+        Gate::before(function ($user, string $ability): ?bool {
+            return method_exists($user, 'hasRole') && $user->hasRole('super_admin') ? true : null;
+        });
+
         // ============================
         // Observers Catalogue
         // ============================
