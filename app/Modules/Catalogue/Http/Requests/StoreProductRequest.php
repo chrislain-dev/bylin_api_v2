@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace Modules\Catalogue\Http\Requests;
 
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Modules\Catalogue\Models\Brand;
-use Illuminate\Foundation\Http\FormRequest;
 
 class StoreProductRequest extends FormRequest
 {
@@ -17,6 +18,11 @@ class StoreProductRequest extends FormRequest
 
     public function rules(): array
     {
+        Log::info('RULES CALLED', [
+            'brand_id' => $this->input('brand_id'),
+            'collection_id' => $this->input('collection_id'),
+            'all_keys' => array_keys($this->all()),
+        ]);
         $rules = [
             // Informations de base
             'name' => ['required', 'string', 'max:255'],
@@ -65,7 +71,7 @@ class StoreProductRequest extends FormRequest
 
             // Variabilité
             'is_variable' => ['boolean'],
-            
+
             'variations' => ['nullable', 'array'],
             'variations.*.sku' => ['nullable', 'string', 'max:100'],
             'variations.*.variation_name' => ['required_with:variations.*', 'string', 'max:255'],
@@ -203,13 +209,6 @@ class StoreProductRequest extends FormRequest
     {
         $validator->after(function ($validator) {
 
-            if ($this->has('collection_id') && !$this->isBylinProduct()) {
-                $validator->errors()->add(
-                    'collection_id',
-                    'Seuls les produits de la marque Bylin peuvent appartenir à une collection.'
-                );
-            }
-
             if ($this->has('compare_price') && $this->has('price')) {
                 if ($this->input('compare_price') <= $this->input('price')) {
                     $validator->errors()->add(
@@ -235,7 +234,7 @@ class StoreProductRequest extends FormRequest
                     );
                 }
             }
-            
+
             if ($this->is_variable && $this->has('variations')) {
                 if (empty($this->variations)) {
                     $validator->errors()->add(

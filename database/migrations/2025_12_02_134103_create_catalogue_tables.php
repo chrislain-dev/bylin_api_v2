@@ -19,7 +19,6 @@ return new class extends Migration
             $table->string('slug')->unique();
             $table->boolean('is_bylin_brand')
                 ->default(false)
-                ->after('slug')
                 ->comment('Identifie si c\'est la marque Bylin (codes authenticité requis)');
             $table->text('description')->nullable();
             $table->string('website')->nullable();

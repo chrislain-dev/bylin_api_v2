@@ -22,7 +22,8 @@ class BrandController extends ApiController
     public function index(Request $request): JsonResponse
     {
         $query = Brand::query()
-            ->with(['media']);
+            ->with(['media'])
+            ->withCount('products');
 
         if ($request->filled('search')) {
             $query->search($request->search);

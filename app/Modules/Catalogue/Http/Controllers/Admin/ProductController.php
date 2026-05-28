@@ -58,6 +58,7 @@ class ProductController extends ApiController
 
     public function store(StoreProductRequest $request): JsonResponse
     {
+        Log::info('Received request to create product', ['request_data' => $request]);
         $product = $this->productService->createProduct($request->validated());
 
         return $this->createdResponse(
@@ -249,7 +250,7 @@ class ProductController extends ApiController
 
     /**
      * Suppression en masse de produits (soft delete)
-     * 
+     *
      * Permet de supprimer plusieurs produits à la fois.
      * Les produits sont placés en corbeille et peuvent être restaurés.
      */

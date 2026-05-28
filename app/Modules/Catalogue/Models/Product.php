@@ -4,19 +4,20 @@ declare(strict_types=1);
 
 namespace Modules\Catalogue\Models;
 
-use Spatie\MediaLibrary\HasMedia;
-use Modules\Core\Models\BaseModel;
-use Modules\Core\Traits\HasStatus;
-use Modules\Reviews\Models\Review;
-use Modules\Catalogue\Models\Brand;
-use Modules\Core\Traits\Searchable;
-use Modules\Catalogue\Models\Collection;
-use Modules\Catalogue\Enums\ProductStatus;
-use Spatie\MediaLibrary\InteractsWithMedia;
-use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Log;
+use Modules\Catalogue\Enums\ProductStatus;
+use Modules\Catalogue\Models\Brand;
+use Modules\Catalogue\Models\Collection;
+use Modules\Core\Models\BaseModel;
+use Modules\Core\Traits\HasStatus;
+use Modules\Core\Traits\Searchable;
+use Modules\Reviews\Models\Review;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
 
 
 class Product extends BaseModel implements HasMedia
@@ -163,9 +164,15 @@ class Product extends BaseModel implements HasMedia
         return $this->hasMany(ProductAuthenticityCode::class);
     }
 
-    public function isBylinProduct(): bool
+    protected function isBylinProduct(): bool
     {
-        return $this->brand && $this->brand->is_bylin_brand;
+        if (!$this->input('brand_id')) {
+            return false;
+        }
+
+        $brand = Brand::find($this->input('brand_id'));
+
+        return $brand && strtolower($brand->slug) === 'bylin';
     }
 
     public function requiresAuthenticity(): bool
@@ -307,7 +314,7 @@ class Product extends BaseModel implements HasMedia
                     // Since variation structure isn't fully visible here, I'll assume standard JSON querying or related attributes table.
                     // Based on ProductController use of 'variations' => fn($q) => $q->active(), and extractMetadata in frontend using 'attributes.color'
                     // If attributes is a JSON column on ProductVariation:
-                    $subQ->orWhere('attributes->color', 'like', "%$color%"); 
+                    $subQ->orWhere('attributes->color', 'like', "%$color%");
                 }
             });
         });
@@ -319,7 +326,7 @@ class Product extends BaseModel implements HasMedia
          return $query->whereHas('variations', function ($q) use ($sizes) {
             $q->where(function ($subQ) use ($sizes) {
                 foreach ($sizes as $size) {
-                    $subQ->orWhere('attributes->size', 'like', "%$size%"); 
+                    $subQ->orWhere('attributes->size', 'like', "%$size%");
                 }
             });
         });

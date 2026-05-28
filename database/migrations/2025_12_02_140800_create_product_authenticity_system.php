@@ -57,6 +57,7 @@ return new class extends Migration
             $table->uuid('scanned_by')->nullable(); // Customer ID if logged in
             $table->string('scan_result'); // authentic, fake, already_activated
             $table->timestamps();
+            $table->softDeletes();
 
             $table->foreign('authenticity_code_id')->references('id')->on('product_authenticity_codes')->onDelete('cascade');
             $table->foreign('scanned_by')->references('id')->on('customers')->onDelete('set null');

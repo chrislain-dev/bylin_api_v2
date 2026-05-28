@@ -4,15 +4,16 @@ declare(strict_types=1);
 
 namespace Modules\Catalogue\Services;
 
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Modules\Catalogue\Enums\ProductStatus;
 use Modules\Catalogue\Models\Product;
+use Modules\Catalogue\Models\ProductAuthenticityCode;
+use Modules\Catalogue\Models\ProductVariation;
 use Modules\Core\Services\BaseService;
 use Modules\Inventory\Models\StockMovement;
-use Modules\Catalogue\Models\ProductVariation;
-use Modules\Catalogue\Models\ProductAuthenticityCode;
 
 class ProductService extends BaseService
 {
@@ -25,6 +26,7 @@ class ProductService extends BaseService
 
     public function createProduct(array $data): Product
     {
+        Log::info('Creating product', ['data' => $data]);
         return $this->transaction(function () use ($data) {
 
             $categories = $data['categories'] ?? [];
@@ -456,13 +458,13 @@ class ProductService extends BaseService
             // Nettoyage des champs auto-générés et timestamps
             unset(
                 $data['id'],
-                $data['slug'],     
-                $data['sku'],       
-                $data['barcode'],  
+                $data['slug'],
+                $data['sku'],
+                $data['barcode'],
                 $data['created_at'],
                 $data['updated_at'],
                 $data['deleted_at'],
-                $data['media']     
+                $data['media']
             );
 
             // Créer le produit dupliqué
