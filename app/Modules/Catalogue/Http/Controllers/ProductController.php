@@ -29,6 +29,9 @@ class ProductController extends ApiController
                 AllowedFilter::scope('in_category', 'inCategory'),
                 AllowedFilter::scope('category_id', 'inCategory'), // Uses scope for pivot table
                 AllowedFilter::exact('brand_id'),
+                AllowedFilter::exact('collection_id'),
+                AllowedFilter::scope('bylin'),
+                AllowedFilter::scope('non_bylin', 'nonBylin'),
                 AllowedFilter::scope('color', 'withColor'),
                 AllowedFilter::scope('size', 'withSize'),
                 AllowedFilter::exact('is_new'),

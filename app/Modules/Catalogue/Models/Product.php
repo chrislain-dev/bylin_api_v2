@@ -185,10 +185,25 @@ class Product extends BaseModel implements HasMedia
         return $this->authenticityCodes()->where('is_authentic', true)->where('is_activated', false)->count();
     }
 
-    public function scopeBylin($query)
+    public function scopeBylin($query, bool|string|int $enabled = true)
     {
+        if (filter_var($enabled, FILTER_VALIDATE_BOOLEAN) === false) {
+            return $query;
+        }
+
         return $query->whereHas('brand', function ($q) {
             $q->where('is_bylin_brand', true);
+        });
+    }
+
+    public function scopeNonBylin($query, bool|string|int $enabled = true)
+    {
+        if (filter_var($enabled, FILTER_VALIDATE_BOOLEAN) === false) {
+            return $query;
+        }
+
+        return $query->whereHas('brand', function ($q) {
+            $q->where('is_bylin_brand', false);
         });
     }
 

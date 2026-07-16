@@ -109,6 +109,16 @@ Route::prefix('v1')->group(function () {
         // Brands
         Route::get('/brands', [\Modules\Catalogue\Http\Controllers\BrandController::class, 'index'])
             ->name('brands.index');
+
+        // Public Bylin collections
+        Route::get('/collections', [\Modules\Catalogue\Http\Controllers\CollectionController::class, 'index'])
+            ->name('collections.index');
+        Route::get('/collections/{slug}', [\Modules\Catalogue\Http\Controllers\CollectionController::class, 'show'])
+            ->name('collections.show')
+            ->where('slug', '[a-z0-9-]+');
+        Route::get('/collections/{slug}/products', [\Modules\Catalogue\Http\Controllers\CollectionController::class, 'products'])
+            ->name('collections.products')
+            ->where('slug', '[a-z0-9-]+');
     });
 
     // Gift Carts (public access via token)

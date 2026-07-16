@@ -13,7 +13,7 @@ use Modules\Customer\Repositories\CustomerRepository;
 
 /**
  * Customer Service
- * 
+ *
  * Handles business logic for customer management
  */
 class CustomerService extends BaseService
@@ -78,12 +78,17 @@ class CustomerService extends BaseService
     {
         return $this->transaction(function () use ($customerId, $data) {
             $this->validateRequired($data, [
-                'first_name', 'last_name', 'phone',
-                'address_line_1', 'city', 'country'
+                'phone', 'address_line_1', 'city', 'country'
             ]);
 
             $data['customer_id'] = $customerId;
             $data['type'] = $data['type'] ?? 'shipping';
+
+            // si first_name et last_name ne sont pas envoyé on recupère celui du customer actuel
+
+            $customer = Customer::where('id', $customerId)->first();
+            $data['first_name'] = $customer->first_name;
+            $data['last_name'] = $customer->last_name;
 
             // If this is set as default, unset others
             if ($data['is_default'] ?? false) {
@@ -140,7 +145,7 @@ class CustomerService extends BaseService
         $customer = $this->customerRepository->findOrFail($customerId);
 
         if (!Hash::check($currentPassword, $customer->password)) {
-            throw new BusinessException('Current password is incorrect');
+            throw new BusinessException('Le mot de passe actuel est incorrecte !');
         }
 
         return $customer->update([

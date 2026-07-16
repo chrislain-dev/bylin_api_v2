@@ -10,9 +10,13 @@ return [
     'gift_cart' => [
         'enabled' => env('GIFT_CART_ENABLED', true),
         'default_expiration_days' => env('GIFT_CART_EXPIRATION_DAYS', 30),
-        'min_contribution_percentage' => env('GIFT_CART_MIN_CONTRIBUTION', 5),
+        // Cahier des charges §11 : contribution minimale de 30% de la valeur du panier
+        'min_contribution_percentage' => env('GIFT_CART_MIN_CONTRIBUTION', 30),
         'allow_anonymous_contributors' => env('GIFT_CART_ALLOW_ANONYMOUS', true),
-        'refund_on_expiration' => env('GIFT_CART_REFUND_ON_EXPIRATION', true),
+        // Cahier des charges §11 : aucun remboursement à expiration,
+        // les contributions sont converties en Avoir BYLIN (crédit boutique)
+        'refund_on_expiration' => env('GIFT_CART_REFUND_ON_EXPIRATION', false),
+        'convert_to_store_credit_on_expiration' => env('GIFT_CART_STORE_CREDIT_ON_EXPIRATION', true),
     ],
 
     'preorder' => [

@@ -40,12 +40,26 @@ class StoreOrderRequest extends FormRequest
             'billing_address.postal_code' => ['nullable', 'string', 'max:30'],
             'billing_address.phone' => ['nullable', 'string', 'max:30'],
 
-            'payment_method' => ['required', 'string', Rule::in([
-                Payment::GATEWAY_FEDAPAY,
-                Payment::GATEWAY_CASH,
-                Payment::GATEWAY_MOBILE_MONEY,
-                'card',
+            // Cahier des charges §9 : canal de finalisation de la commande
+            'channel' => ['nullable', 'string', Rule::in([
+                \Modules\Order\Models\Order::CHANNEL_ONLINE,
+                \Modules\Order\Models\Order::CHANNEL_WHATSAPP,
             ])],
+
+            // Le moyen de paiement n'est pas requis pour une commande WhatsApp :
+            // le paiement est convenu avec le conseiller (Mobile Money manuel, etc.)
+            'payment_method' => [
+                'required_unless:channel,' . \Modules\Order\Models\Order::CHANNEL_WHATSAPP,
+                'nullable',
+                'string',
+                Rule::in([
+                    Payment::GATEWAY_FEDAPAY,
+                    Payment::GATEWAY_CASH,
+                    Payment::GATEWAY_MOBILE_MONEY,
+                    'card',
+                    'whatsapp',
+                ]),
+            ],
             'customer_email' => ['required', 'email:rfc,dns', 'max:255'],
             'customer_phone' => ['required', 'string', 'max:30'],
             'customer_note' => ['nullable', 'string', 'max:500'],

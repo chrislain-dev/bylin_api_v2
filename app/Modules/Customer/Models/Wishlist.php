@@ -4,15 +4,12 @@ declare(strict_types=1);
 
 namespace Modules\Customer\Models;
 
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Catalogue\Models\Product;
 use Modules\Core\Models\BaseModel;
 
 class Wishlist extends BaseModel
 {
-    use HasUuids;
-
     protected $table = 'wishlists';
 
     protected $fillable = [

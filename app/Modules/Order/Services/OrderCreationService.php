@@ -44,11 +44,15 @@ class OrderCreationService extends BaseService
                 }
             }
 
+            $channel = $data['channel'] ?? Order::CHANNEL_ONLINE;
+            $isWhatsapp = $channel === Order::CHANNEL_WHATSAPP;
+
             $order = Order::create([
                 'customer_id' => $cart->customer_id,
-                'status' => Order::STATUS_PENDING,
+                'status' => $isWhatsapp ? Order::STATUS_WHATSAPP_SENT : Order::STATUS_PENDING,
                 'payment_status' => Order::PAYMENT_STATUS_PENDING,
-                'payment_method' => $data['payment_method'] ?? null,
+                'payment_method' => $data['payment_method'] ?? ($isWhatsapp ? 'whatsapp' : null),
+                'channel' => $channel,
                 'customer_email' => $data['customer_email'],
                 'customer_phone' => $data['customer_phone'],
                 'shipping_address' => $data['shipping_address'],
@@ -100,9 +104,21 @@ class OrderCreationService extends BaseService
                 );
             }
 
-            OrderStatusHistory::createHistory($order->id, Order::STATUS_PENDING, 'Commande créée');
+            OrderStatusHistory::createHistory(
+                $order->id,
+                $isWhatsapp ? Order::STATUS_WHATSAPP_SENT : Order::STATUS_PENDING,
+                $isWhatsapp ? 'Commande créée et envoyée sur WhatsApp' : 'Commande créée'
+            );
 
-            if (($data['payment_method'] ?? null) === Payment::GATEWAY_FEDAPAY) {
+            if ($isWhatsapp) {
+                // Cahier des charges §9 : génère le lien WhatsApp avec un message pré-rempli
+                // (numéro de commande, récapitulatif des produits, total estimé).
+                $order->update([
+                    'metadata' => array_merge($order->metadata ?? [], [
+                        'whatsapp_url' => $this->buildWhatsappUrl($order->fresh(['items'])),
+                    ]),
+                ]);
+            } elseif (($data['payment_method'] ?? null) === Payment::GATEWAY_FEDAPAY) {
                 $paymentData = $this->paymentService->initializePayment($order, Payment::GATEWAY_FEDAPAY);
 
                 $order->update([
@@ -119,5 +135,44 @@ class OrderCreationService extends BaseService
 
             return $order->fresh(['items.product', 'items.variation', 'payment']);
         });
+    }
+
+    /**
+     * Cahier des charges §9 : construit le lien "wa.me" avec le message pré-rempli.
+     *
+     * Exemple de message :
+     *   Bonjour BYLIN,
+     *   Je souhaite finaliser la commande n°BYL-000125.
+     *   Produits :
+     *   - Blazer Signature Noir x1
+     *   Total estimé : 135 000 FCFA.
+     */
+    protected function buildWhatsappUrl(Order $order): ?string
+    {
+        $number = preg_replace('/\D+/', '', (string) config('services.whatsapp.number'));
+
+        $lines = [
+            'Bonjour BYLIN,',
+            '',
+            "Je souhaite finaliser la commande n°{$order->order_number}.",
+            '',
+            'Produits :',
+        ];
+
+        foreach ($order->items as $item) {
+            $name = $item->product_name . ($item->variation_name ? " ({$item->variation_name})" : '');
+            $lines[] = "- {$name} x{$item->quantity}";
+        }
+
+        $lines[] = '';
+        $lines[] = 'Total estimé : ' . number_format((int) $order->total, 0, ',', ' ') . ' FCFA.';
+
+        $text = rawurlencode(implode("\n", $lines));
+
+        // Sans numéro configuré, on retourne tout de même un lien wa.me générique
+        // que le frontend peut compléter, plutôt que de casser le parcours.
+        return $number !== ''
+            ? "https://wa.me/{$number}?text={$text}"
+            : "https://wa.me/?text={$text}";
     }
 }

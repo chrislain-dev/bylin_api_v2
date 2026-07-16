@@ -26,6 +26,7 @@ class Order extends BaseModel
         'status',
         'payment_status',
         'payment_method',
+        'channel',
         'customer_email',
         'customer_phone',
         'shipping_address',
@@ -62,6 +63,14 @@ class Order extends BaseModel
     public const STATUS_DELIVERED = 'delivered';
     public const STATUS_CANCELLED = 'cancelled';
     public const STATUS_REFUNDED = 'refunded';
+
+    // Cahier des charges §9 : statuts spécifiques au parcours WhatsApp
+    public const STATUS_WHATSAPP_SENT = 'whatsapp_sent';   // Envoyé sur WhatsApp
+    public const STATUS_IN_DISCUSSION = 'in_discussion';   // En discussion avec un conseiller
+
+    // Cahier des charges §9 : canaux de commande
+    public const CHANNEL_ONLINE = 'online';
+    public const CHANNEL_WHATSAPP = 'whatsapp';
 
     // Payment status constants
     public const PAYMENT_STATUS_PENDING = 'pending';
@@ -123,6 +132,14 @@ class Order extends BaseModel
     public function scopePaymentStatus($query, string $paymentStatus)
     {
         return $query->where('payment_status', $paymentStatus);
+    }
+
+    /**
+     * Scope to filter by order channel (online / whatsapp) — cahier §9
+     */
+    public function scopeChannel($query, string $channel)
+    {
+        return $query->where('channel', $channel);
     }
 
     /**

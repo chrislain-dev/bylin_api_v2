@@ -49,4 +49,10 @@ return [
        'environment' => env('FEDAPAY_ENVIRONMENT', 'sandbox'),
     ],
 
+    // Cahier des charges §9 : finalisation de commande via WhatsApp
+    'whatsapp' => [
+        // Numéro au format international sans "+" ni espaces, ex: 22997000000
+        'number' => env('WHATSAPP_BUSINESS_NUMBER', ''),
+    ],
+
 ];

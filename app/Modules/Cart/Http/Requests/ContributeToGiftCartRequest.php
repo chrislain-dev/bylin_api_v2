@@ -24,7 +24,9 @@ class ContributeToGiftCartRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'amount' => ['required', 'integer', 'min:1', 'max:100000000'],
+            'amount' => ['nullable', 'integer', 'min:1', 'max:100000000'],
+            'contribution_type' => ['nullable', 'string', 'in:amount,percentage'],
+            'percentage' => ['nullable', 'integer', 'min:1', 'max:100'],
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255'],
             'message' => ['nullable', 'string', 'max:500'],
@@ -35,8 +37,9 @@ class ContributeToGiftCartRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'amount.required' => 'Please enter a contribution amount.',
-            'amount.min' => 'Contribution must be at least 1.',
+                        'amount.min' => 'Contribution must be at least 1.',
+            'percentage.min' => 'Percentage must be at least 1%.',
+            'percentage.max' => 'Percentage cannot exceed 100% ',
             'name.required' => 'Please enter your name.',
             'email.required' => 'Please enter your email address.',
             'email.email' => 'Please enter a valid email address.',

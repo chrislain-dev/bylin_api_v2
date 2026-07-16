@@ -52,10 +52,13 @@ class GiftCartController extends ApiController
         $validated['customer_id'] = auth('sanctum')->id();
 
         try {
+            $giftCart = $this->giftCartService->getByToken($token);
+            $amount = $this->resolveContributionAmount($validated, (int) $giftCart->gift_cart_target_amount);
+
             $contributor = $this->giftCartService->addContribution(
                 $token,
                 $validated,
-                (int) $validated['amount']
+                $amount
             );
         } catch (Throwable $e) {
             return $this->errorResponse($e->getMessage(), method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 422);
@@ -65,6 +68,29 @@ class GiftCartController extends ApiController
             $contributor,
             'Contribution added. Please proceed to payment.'
         );
+    }
+
+    private function resolveContributionAmount(array $validated, int $targetAmount): int
+    {
+        $type = $validated['contribution_type'] ?? 'amount';
+
+        if ($type === 'percentage') {
+            $percentage = (int) ($validated['percentage'] ?? 0);
+
+            if ($percentage < 1 || $percentage > 100) {
+                abort(422, 'Please choose a valid percentage between 1 and 100.');
+            }
+
+            return max(1, (int) ceil($targetAmount * $percentage / 100));
+        }
+
+        $amount = (int) ($validated['amount'] ?? 0);
+
+        if ($amount < 1) {
+            abort(422, 'Please enter a contribution amount.');
+        }
+
+        return $amount;
     }
 
     public function contributions(string $token): JsonResponse

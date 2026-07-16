@@ -29,6 +29,9 @@ class UpdateOrderStatusRequest extends FormRequest
                     Order::STATUS_DELIVERED,
                     Order::STATUS_CANCELLED,
                     Order::STATUS_REFUNDED,
+                    // Cahier des charges §9 : parcours WhatsApp
+                    Order::STATUS_WHATSAPP_SENT,
+                    Order::STATUS_IN_DISCUSSION,
                 ]),
             ],
             'note' => ['nullable', 'string', 'max:500'],

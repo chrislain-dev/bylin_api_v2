@@ -37,6 +37,11 @@ class OrderController extends ApiController
             $query->where('payment_status', $request->payment_status);
         }
 
+        // Cahier des charges §9 : filtre par canal (whatsapp / online)
+        if ($request->has('channel')) {
+            $query->where('channel', $request->channel);
+        }
+
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {

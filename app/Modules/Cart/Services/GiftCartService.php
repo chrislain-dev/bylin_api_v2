@@ -200,7 +200,12 @@ class GiftCartService extends BaseService
 
     public function getGiftCartLink(string $token): string
     {
-        return rtrim((string) config('app.url'), '/') . "/gift-cart/{$token}";
+        $frontendUrl = config('app.frontend_url')
+            ?? config('services.frontend.url')
+            ?? env('FRONTEND_URL')
+            ?? config('app.url');
+
+        return rtrim((string) $frontendUrl, '/') . "/gift-carts/{$token}";
     }
 
     protected function generateUniqueToken(): string
@@ -223,9 +228,11 @@ class GiftCartService extends BaseService
                 foreach ($expiredCarts as $cart) {
                     $cart->update(['gift_cart_status' => GiftCartStatus::EXPIRED]);
 
-                    if (config('ecommerce.gift_cart.refund_on_expiration', true)) {
-                        event(new GiftCartExpired($cart));
-                    }
+                    // Cahier des charges §11 : à expiration, pas de remboursement —
+                    // les contributions doivent être converties en Avoir BYLIN.
+                    // L'événement est toujours émis pour que les listeners
+                    // (notification, conversion en avoir) soient exécutés.
+                    event(new GiftCartExpired($cart));
 
                     $expiredCount++;
                 }

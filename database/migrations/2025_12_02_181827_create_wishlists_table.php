@@ -17,10 +17,11 @@ return new class extends Migration
             $table->uuid('product_id');
             $table->text('notes')->nullable();
             $table->timestamps();
+            $table->softDeletes();
 
             $table->foreign('customer_id')->references('id')->on('customers')->onDelete('cascade');
             $table->foreign('product_id')->references('id')->on('products')->onDelete('cascade');
-            
+
             // Prevent duplicate entries
             $table->unique(['customer_id', 'product_id']);
             $table->index('customer_id');
