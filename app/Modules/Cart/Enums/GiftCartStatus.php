@@ -16,4 +16,17 @@ class GiftCartStatus extends BaseEnum
     public const COMPLETED = 'completed';
     public const EXPIRED = 'expired';
     public const CANCELLED = 'cancelled';
+
+    public static function labels(): array
+    {
+        return [
+            self::PENDING => 'Pending',
+            self::PARTIAL => 'Partial',
+            self::COMPLETED => 'Completed',
+            self::EXPIRED => 'Expired',
+            self::CANCELLED => 'Cancelled',
+        ];
+    }
+
+    
 }

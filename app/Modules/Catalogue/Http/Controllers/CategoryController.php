@@ -162,9 +162,8 @@ class CategoryController extends ApiController
 
         // Construction de la requête produits
         $query = $category->products()
-            ->with(['brand', 'categories', 'variants'])
-            ->where('status', 'active')
-            ->where('is_visible', true);
+            ->with(['brand', 'categories', 'variations'])
+            ->where('status', 'active');
 
         // 🔥 OPTIMISATION: Inclure les produits des sous-catégories via path
         if ($request->boolean('include_descendants', true)) {

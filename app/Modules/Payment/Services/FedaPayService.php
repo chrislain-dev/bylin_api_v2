@@ -40,7 +40,14 @@ class FedaPayService extends BaseService
             'description' => "Commande {$order->order_number}",
             'amount' => (int) $payment->amount,
             'currency' => ['iso' => $payment->currency ?: 'XOF'],
-            'callback_url' => route('api.webhooks.fedapay'),
+            // IMPORTANT : callback_url est le lien de RETOUR NAVIGATEUR après paiement
+            // (voir doc FedaPay : "un lien de retour facultatif pour rediriger le client
+            // après le paiement"). Ce n'est PAS le webhook serveur-à-serveur — celui-ci est
+            // configuré séparément dans le dashboard FedaPay et géré par fedapay.signature.
+            // On redirige donc vers le FRONT, jamais vers une route API. On n'utilise pas le
+            // statut renvoyé dans les query params (FedaPay recommande de ne pas s'y fier) :
+            // la page de retour revérifie toujours le vrai statut via l'API.
+            'callback_url' => $this->buildReturnUrl($order),
             'custom_metadata' => [
                 'payment_id' => $payment->id,
                 'order_id' => $order->id,
@@ -107,6 +114,18 @@ class FedaPayService extends BaseService
 
             throw $e;
         }
+    }
+
+    /**
+     * Build the browser return URL (frontend) the customer lands on after paying on FedaPay.
+     * We only pass the order id — the return page must always re-fetch the real status
+     * from the API rather than trusting anything FedaPay appends to this URL.
+     */
+    protected function buildReturnUrl(Order $order): string
+    {
+        $frontendUrl = rtrim((string) config('app.frontend_url', 'http://localhost:3001'), '/');
+
+        return "{$frontendUrl}/checkout/return?order_id={$order->id}";
     }
 
     /**

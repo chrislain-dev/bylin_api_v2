@@ -145,9 +145,9 @@ class Category extends BaseModel
             'category_id',
             'product_id'
         )
-            ->withPivot('is_primary', 'sort_order')
-            ->withTimestamps()
-            ->orderByPivot('sort_order');
+            // ->withPivot('is_primary', 'sort_order')
+            ->withTimestamps();
+            // ->orderByPivot('sort_order');
     }
 
     // ============================================================================
