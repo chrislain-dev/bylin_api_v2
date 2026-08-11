@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Modules\Customer\Models;
 
+use App\Notifications\ResetPasswordNotification;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -96,6 +97,16 @@ class Customer extends Authenticatable
     /**
      * Get customer's full name
      */
+    /**
+     * Envoyer la notification de réinitialisation de mot de passe
+     * (sans cette surcharge, Laravel utilise sa notification par défaut,
+     * qui pointe vers une route web 'password.reset' inexistante dans une API SPA)
+     */
+    public function sendPasswordResetNotification($token): void
+    {
+        $this->notify(new ResetPasswordNotification($token));
+    }
+
     public function getFullNameAttribute(): string
     {
         return "{$this->first_name} {$this->last_name}";

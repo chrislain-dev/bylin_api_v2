@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Password;
 use Modules\Customer\Models\Customer;
 use Laravel\Socialite\Facades\Socialite;
 use Illuminate\Validation\ValidationException;
@@ -66,6 +67,7 @@ class CustomerAuthController extends ApiController
         $validated = $request->validate([
             'email' => 'required|email',
             'password' => 'required|string',
+            'remember' => 'sometimes|boolean',
         ]);
 
         $customer = Customer::where('email', $validated['email'])->first();
@@ -84,7 +86,7 @@ class CustomerAuthController extends ApiController
         }
 
         // Login using customer guard (creates session)
-        Auth::guard('customer')->login($customer);
+        Auth::guard('customer')->login($customer, (bool) ($validated['remember'] ?? false));
 
         // Regenerate session to prevent fixation
         $request->session()->regenerate();
@@ -158,6 +160,96 @@ class CustomerAuthController extends ApiController
     public function me(Request $request): JsonResponse
     {
         return response()->json($request->user()->load(['addresses', 'roles.permissions']));
+    }
+
+    /**
+     * Envoyer un lien de réinitialisation de mot de passe au client
+     * (endpoint volontairement neutre : ne révèle jamais si l'email existe)
+     */
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'email' => 'required|email',
+            ], [
+                'email.required' => 'L\'adresse e-mail est obligatoire.',
+                'email.email' => 'L\'adresse e-mail doit être valide.',
+            ]);
+
+            $credentials = ['email' => mb_strtolower($validated['email'])];
+            $status = Password::broker('customers')->sendResetLink($credentials);
+
+            Log::info('Demande de réinitialisation de mot de passe client', [
+                'email_hash' => hash('sha256', $credentials['email']),
+                'ip' => $request->ip(),
+                'status' => $status,
+            ]);
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error('Erreur lors de l\'envoi du lien de réinitialisation client', [
+                'error' => $e->getMessage(),
+            ]);
+            // On ne révèle jamais l'erreur interne au client
+        }
+
+        // Réponse volontairement identique que l'email existe ou non (anti-enumeration)
+        return $this->successResponse(
+            null,
+            'Si ce compte existe, un lien de réinitialisation a été envoyé à votre adresse e-mail.'
+        );
+    }
+
+    /**
+     * Réinitialiser le mot de passe d'un client via le token reçu par email
+     */
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'token' => 'required|string',
+            'email' => 'required|email',
+            'password' => 'required|string|min:8|confirmed',
+        ], [
+            'token.required' => 'Le token est obligatoire.',
+            'email.required' => 'L\'adresse e-mail est obligatoire.',
+            'password.required' => 'Le mot de passe est obligatoire.',
+            'password.min' => 'Le mot de passe doit contenir au moins 8 caractères.',
+            'password.confirmed' => 'Les mots de passe ne correspondent pas.',
+        ]);
+
+        $status = Password::broker('customers')->reset(
+            $validated,
+            function (Customer $customer, string $password) use ($request) {
+                $customer->forceFill([
+                    'password' => Hash::make($password),
+                ])->save();
+
+                // Révoquer toutes les sessions / tokens existants après un reset
+                $customer->tokens()->delete();
+
+                Log::info('Mot de passe client réinitialisé avec succès', [
+                    'customer_id' => $customer->id,
+                    'ip' => $request->ip(),
+                ]);
+            }
+        );
+
+        if ($status !== Password::PASSWORD_RESET) {
+            Log::warning('Échec de réinitialisation du mot de passe client', [
+                'email_hash' => hash('sha256', mb_strtolower($validated['email'])),
+                'status' => $status,
+                'ip' => $request->ip(),
+            ]);
+
+            return $this->errorResponse(
+                $status === Password::INVALID_TOKEN
+                    ? 'Ce lien de réinitialisation est invalide ou a expiré.'
+                    : 'Impossible de réinitialiser le mot de passe.',
+                400
+            );
+        }
+
+        return $this->successResponse(null, 'Votre mot de passe a été réinitialisé avec succès.');
     }
 
     /**

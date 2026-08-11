@@ -43,6 +43,14 @@ Route::prefix('v1')->group(function () {
                 ->middleware('throttle:10,1')
                 ->name('customer.login');
 
+            // Password reset
+            Route::post('/customer/forgot-password', [\Modules\Customer\Http\Controllers\CustomerAuthController::class, 'forgotPassword'])
+                ->middleware('throttle:5,1')
+                ->name('customer.forgot-password');
+            Route::post('/customer/reset-password', [\Modules\Customer\Http\Controllers\CustomerAuthController::class, 'resetPassword'])
+                ->middleware('throttle:5,1')
+                ->name('customer.reset-password');
+
             // Google OAuth
             Route::get('/customer/google/redirect', [\Modules\Customer\Http\Controllers\CustomerAuthController::class, 'googleRedirect'])
                 ->middleware('throttle:10,1')
